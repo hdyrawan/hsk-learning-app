@@ -534,7 +534,7 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
 /* ================================================================== */
 /*  LIBRARY VIEW (render-capped for large levels)                      */
 /* ================================================================== */
-const LIBRARY_CAP = 120;
+const LIBRARY_CAP = 150;
 function LibraryView({ deck, progress, theme }) {
   const [filter, setFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -553,7 +553,9 @@ function LibraryView({ deck, progress, theme }) {
       const q = search.toLowerCase().trim();
       l = l.filter(w => w.hanzi.includes(search.trim()) || w.pinyin.toLowerCase().includes(q) || w.meaning.toLowerCase().includes(q));
     }
-    return l;
+    // Sort alphabetically by pinyin so classic and new HSK words interleave
+    // rather than classic always appearing before new HSK.
+    return [...l].sort((a, b) => a.pinyin.localeCompare(b.pinyin));
   }, [deck, filter, search]);
 
   const shown = list.slice(0, LIBRARY_CAP);
