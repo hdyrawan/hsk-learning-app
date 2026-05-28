@@ -1,81 +1,87 @@
-# HSK Learning App
+# HSK Flashcard App
 
-A React flashcard app for studying classic HSK vocabulary. It includes study cards, quiz mode, daily review, a searchable library, custom words, local progress storage, export/import backup, dark mode, and reverse recall mode.
+A browser-based flashcard app for studying Mandarin Chinese vocabulary using the classic HSK 2.0 syllabus (levels 1–6, roughly 5,000 words). The app runs entirely in the browser — no account, no server, no cloud sync.
+
+## Features
+
+| Feature | Description |
+|---|---|
+| **Study mode** | Flip cards with keyboard or tap; filter by SRS level |
+| **Quiz mode** | Multiple-choice questions drawn from the active deck |
+| **Review mode** | Spaced-repetition queue of cards due today (capped at 40 per session) |
+| **Library** | Searchable word list with SRS badges |
+| **Custom words** | Add your own hanzi/pinyin/meaning entries |
+| **Reverse mode** | Show English first; recall the hanzi |
+| **Dark mode** | Toggle from the header |
+| **Export / Import** | Back up progress and custom words to a JSON file |
+
+Progress and settings are saved in the browser's `localStorage` — nothing is sent to a server.
 
 ## Quick Start
 
-Run the production Docker container:
+**With Docker (recommended):**
 
 ```bash
 docker compose up --build -d
 ```
 
-Open the app:
+Open in a browser:
 
-```text
+```
 http://localhost:8080
 ```
 
-From another device on the same LAN, use this machine's LAN IP:
+From another device on the same local network, use this machine's IP address:
 
-```text
-http://<your-lan-ip>:8080
+```bash
+hostname -I   # shows your LAN IP
 ```
 
-Stop the app:
+```
+http://<LAN-IP>:8080
+```
+
+Stop the container:
 
 ```bash
 docker compose down
 ```
 
-## Development
-
-If Node.js 22 or newer is installed locally:
+**With Node.js 22+ installed locally:**
 
 ```bash
 npm ci
 npm run dev
 ```
 
-If Node is not installed locally, use Docker:
-
-```bash
-docker compose up --build -d
-```
-
-Build a production bundle:
-
-```bash
-npm run build
-```
-
 ## Project Structure
 
-```text
+```
 .
-├── HSK3Flashcards (revision).jsx  # Main React app component
-├── hskWords.js                    # Generated HSK vocabulary data
-├── src/main.jsx                   # React entrypoint
-├── index.html                     # Vite HTML shell
-├── vite.config.js                 # Vite React config
-├── Dockerfile                     # Multi-stage production build
-├── docker-compose.yml             # Runs nginx on host port 8080
-├── nginx.conf                     # Static app server config
-├── scripts/generate_hsk_words.py  # Vocabulary generator
-├── docs/                          # Project notes and operating docs
-└── package.json                   # App scripts and dependencies
+├── src/
+│   ├── main.jsx               # React entry point
+│   ├── HSKFlashcards.jsx      # All app views, components, and SRS logic
+│   └── hskWords.js            # Generated HSK vocabulary (HSK_WORDS, HSK_LEVELS)
+├── scripts/
+│   └── generate_hsk_words.py  # Converts upstream vocabulary JSON to hskWords.js
+├── docs/
+│   ├── ARCHITECTURE.md        # App architecture and state model
+│   ├── DEPLOYMENT.md          # Docker build and networking
+│   ├── VOCABULARY_DATA.md     # Vocabulary sources, generation, and data notes
+│   └── CONTRIBUTING.md        # How to develop, test, and regenerate data
+├── index.html                 # Vite HTML shell
+├── vite.config.js             # Vite + React plugin config
+├── Dockerfile                 # Multi-stage build: Node → nginx
+├── docker-compose.yml         # Runs the app on host port 8080
+└── nginx.conf                 # Static file server with security headers
 ```
 
-## Data Note
+## Vocabulary Data
 
-`hskWords.js` is generated from `complete.json` in [`drkameleon/complete-hsk-vocabulary`](https://github.com/drkameleon/complete-hsk-vocabulary), which is MIT licensed. The generator keeps classic HSK 2.0 levels 1-6 and chooses a learner-facing form when the source entry has multiple dictionary forms.
+`src/hskWords.js` is generated from the [`drkameleon/complete-hsk-vocabulary`](https://github.com/drkameleon/complete-hsk-vocabulary) dataset (MIT License). The generator at `scripts/generate_hsk_words.py` selects the best learner-facing definition when a source entry has multiple dictionary forms.
 
-See [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md).
+See [docs/VOCABULARY_DATA.md](docs/VOCABULARY_DATA.md) for details and regeneration instructions.
 
-## Browser Storage
+## Backing Up Progress
 
-Learning progress and custom words are saved in the browser's `localStorage`, not on the server. Use Settings -> Export JSON to back up progress before clearing browser data or changing devices.
-
-## GitHub
-
-This folder can be committed as a normal Git repository. Recommended tracked files are the source, docs, Docker files, `package.json`, and `package-lock.json`. Generated outputs and local app state are ignored by `.gitignore`.
+Learning progress and custom words live in the browser's `localStorage`. To move between devices or browsers, use **Settings → Export JSON** to save a backup file and **Settings → Import JSON** to restore it.

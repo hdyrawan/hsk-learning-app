@@ -573,7 +573,8 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
   const addWord = () => {
     if (!form.hanzi.trim() || !form.pinyin.trim() || !form.meaning.trim()) { flash("Hanzi, pinyin and meaning are required."); return; }
     const nums = customWords.map(w => Number(String(w.id).replace("custom-", ""))).filter(n => !isNaN(n));
-    const word = { ...form, id: `custom-${(nums.length ? Math.max(...nums) : 0) + 1}`, source: "custom", level: "custom" };
+    const maxId = nums.reduce((m, n) => Math.max(m, n), 0);
+    const word = { ...form, id: `custom-${maxId + 1}`, source: "custom", level: "custom" };
     Object.keys(word).forEach(k => { if (typeof word[k] === "string") word[k] = word[k].trim(); });
     if (!word.exampleHanzi) { delete word.exampleHanzi; delete word.examplePinyin; delete word.exampleEnglish; }
     setCustomWords([...customWords, word]);
@@ -589,22 +590,33 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `hsk-backup-${new Date().toISOString().slice(0, 10)}.json`; a.click();
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = `hsk-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
     flash("Exported your data.");
   };
   const importData = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
+    reader.onerror = () => flash("That file could not be read.");
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result);
-        if (data.progress) setProgress(p => ({ ...p, ...data.progress }));
-        if (Array.isArray(data.customWords)) setCustomWords(prev => {
-          const ids = new Set(prev.map(w => w.id));
-          return [...prev, ...data.customWords.filter(w => !ids.has(w.id))];
-        });
+        if (data.progress && typeof data.progress === "object" && !Array.isArray(data.progress)) {
+          setProgress(p => ({ ...p, ...data.progress }));
+        }
+        if (Array.isArray(data.customWords)) {
+          const valid = data.customWords.filter(
+            w => w && typeof w === "object" && w.id && w.hanzi && w.pinyin && w.meaning
+          );
+          setCustomWords(prev => {
+            const ids = new Set(prev.map(w => w.id));
+            return [...prev, ...valid.filter(w => !ids.has(w.id))];
+          });
+        }
         if (data.settings && typeof data.settings.darkMode === "boolean") setDarkMode(data.settings.darkMode);
         flash("Imported and merged your data.");
       } catch { flash("That file could not be read as valid JSON."); }
