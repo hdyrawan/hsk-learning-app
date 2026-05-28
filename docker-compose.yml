@@ -1,0 +1,7 @@
+services:
+  hsk-learning:
+    build: .
+    container_name: hsk-learning
+    ports:
+      - "8080:80"
+    restart: unless-stopped
