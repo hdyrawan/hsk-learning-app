@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Generate hskWords.js from drkameleon/complete-hsk-vocabulary complete.json."""
+"""Generate hskWords.js from drkameleon/complete-hsk-vocabulary complete.json.
+
+Produces two word sets from the same source file:
+  - Classic HSK 2.0  levels 1–6  (~4,998 words, tagged old-1 … old-6)
+  - New    HSK 3.0  levels N1–N7 (~10,969 words, tagged new-1 … new-7)
+
+Words that appear in both standards get separate entries so each standard
+is self-contained when selected in the app.
+"""
 
 from __future__ import annotations
 
@@ -55,18 +63,7 @@ POS_LABELS = {
 }
 
 PREFERRED_POS = [
-    "n",
-    "v",
-    "a",
-    "d",
-    "q",
-    "r",
-    "u",
-    "y",
-    "m",
-    "t",
-    "c",
-    "p",
+    "n", "v", "a", "d", "q", "r", "u", "y", "m", "t", "c", "p",
 ]
 
 BAD_MEANING_PATTERNS = [
@@ -97,12 +94,23 @@ GOOD_MEANING_PATTERNS = [
 
 
 def old_level(entry: dict) -> int | None:
+    """Return the lowest classic HSK 2.0 level (1–6) for this entry, or None."""
     levels = []
     for level in entry.get("level", []):
         match = re.fullmatch(r"old-([1-6])", str(level))
         if match:
             levels.append(int(match.group(1)))
     return min(levels) if levels else None
+
+
+def new_level(entry: dict) -> str | None:
+    """Return the lowest new HSK 3.0 level (N1–N7) for this entry, or None."""
+    levels = []
+    for level in entry.get("level", []):
+        match = re.fullmatch(r"new-([1-7])", str(level))
+        if match:
+            levels.append(int(match.group(1)))
+    return f"N{min(levels)}" if levels else None
 
 
 def label_for_pos(codes: list[str], meaning: str = "") -> str:
@@ -166,50 +174,79 @@ def meaning_for(form: dict) -> str:
     return "; ".join(meanings) if meanings else ""
 
 
+def build_word(entry: dict, level: int | str) -> dict | None:
+    form = best_form(entry)
+    transcriptions = form.get("transcriptions", {})
+    pinyin = transcriptions.get("pinyin", "")
+    meaning = meaning_for(form)
+    if not pinyin or not meaning:
+        return None
+    return {
+        "_frequency": entry.get("frequency") or 999999,
+        "hanzi": entry["simplified"],
+        "pinyin": pinyin,
+        "meaning": meaning,
+        "partOfSpeech": label_for_pos(entry.get("pos", []), meaning),
+        "level": level,
+    }
+
+
 def generate(source_path: Path) -> list[dict]:
     source = json.loads(source_path.read_text(encoding="utf-8"))
-    generated = []
+
+    classic_words: list[dict] = []
+    new_words: list[dict] = []
 
     for entry in source:
-        level = old_level(entry)
-        if level is None:
-            continue
+        cl = old_level(entry)
+        nl = new_level(entry)
 
-        form = best_form(entry)
-        transcriptions = form.get("transcriptions", {})
-        pinyin = transcriptions.get("pinyin", "")
-        meaning = meaning_for(form)
-        if not pinyin or not meaning:
-            continue
+        if cl is not None:
+            word = build_word(entry, cl)
+            if word:
+                classic_words.append(word)
 
-        generated.append(
-            {
-                "_frequency": entry.get("frequency") or 999999,
-                "hanzi": entry["simplified"],
-                "pinyin": pinyin,
-                "meaning": meaning,
-                "partOfSpeech": label_for_pos(entry.get("pos", []), meaning),
-                "level": level,
-            }
-        )
+        if nl is not None:
+            word = build_word(entry, nl)
+            if word:
+                new_words.append(word)
 
-    generated.sort(key=lambda item: (item["level"], item["_frequency"], item["hanzi"]))
-    for index, item in enumerate(generated, start=1):
+    def sort_key_classic(item: dict):
+        return (item["level"], item["_frequency"], item["hanzi"])
+
+    def sort_key_new(item: dict):
+        return (int(item["level"][1:]), item["_frequency"], item["hanzi"])
+
+    classic_words.sort(key=sort_key_classic)
+    new_words.sort(key=sort_key_new)
+
+    all_words = classic_words + new_words
+    for index, item in enumerate(all_words, start=1):
         del item["_frequency"]
         item["id"] = index
-    return generated
+
+    return all_words
 
 
 def write_js(words: list[dict], output_path: Path) -> None:
-    with output_path.open("w", encoding="utf-8") as handle:
-        handle.write("// Complete classic HSK 2.0 vocabulary levels 1-6.\n")
-        handle.write("// Source: https://github.com/drkameleon/complete-hsk-vocabulary (MIT License).\n")
-        handle.write("// Generated from complete.json by scripts/generate_hsk_words.py.\n")
-        handle.write("// The generator chooses the best learner-facing form when an entry has multiple dictionary forms.\n\n")
-        handle.write("export const HSK_WORDS = ")
-        json.dump(words, handle, ensure_ascii=False, indent=2)
-        handle.write(";\n\n")
-        handle.write("export const HSK_LEVELS = [1, 2, 3, 4, 5, 6];\n")
+    classic = [w for w in words if isinstance(w["level"], int)]
+    new_hsk = [w for w in words if isinstance(w["level"], str) and w["level"].startswith("N")]
+
+    with output_path.open("w", encoding="utf-8") as f:
+        f.write("// HSK vocabulary — classic HSK 2.0 (levels 1–6) and new HSK 3.0 (levels N1–N7).\n")
+        f.write("// Source: https://github.com/drkameleon/complete-hsk-vocabulary (MIT License).\n")
+        f.write("// Generated from complete.json by scripts/generate_hsk_words.py.\n")
+        f.write("// Do not edit this file directly — run the generator script to regenerate.\n\n")
+        f.write("export const HSK_WORDS = ")
+        json.dump(words, f, ensure_ascii=False, indent=2)
+        f.write(";\n\n")
+        f.write("export const HSK_CLASSIC_LEVELS = [1, 2, 3, 4, 5, 6];\n")
+        f.write('export const HSK_NEW_LEVELS = ["N1", "N2", "N3", "N4", "N5", "N6", "N7"];\n')
+        f.write("export const HSK_LEVELS = [...HSK_CLASSIC_LEVELS, ...HSK_NEW_LEVELS];\n")
+
+    print(f"Classic HSK 2.0: {len(classic)} words")
+    print(f"New HSK 3.0:     {len(new_hsk)} words")
+    print(f"Total:           {len(words)} words")
 
 
 def main() -> int:
@@ -219,7 +256,6 @@ def main() -> int:
 
     words = generate(Path(sys.argv[1]))
     write_js(words, Path(sys.argv[2]))
-    print(f"generated {len(words)} HSK words")
     return 0
 
 

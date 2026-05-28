@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { HSK_WORDS, HSK_LEVELS } from "./hskWords";
+import { HSK_WORDS, HSK_CLASSIC_LEVELS, HSK_NEW_LEVELS } from "./hskWords";
 
 /* ================================================================== */
-/*  This app loads the complete classic HSK vocabulary (levels 1-6,    */
-/*  ~5,000 words) from hskWords.js. Pick which levels are active with  */
-/*  the selector at the top; HSK 3 is on by default. Custom words you  */
-/*  add are always included. Some imported words don't ship with an    */
-/*  example sentence — the card simply omits that section for them.    */
+/*  Supports both classic HSK 2.0 (levels 1–6, ~5,000 words) and      */
+/*  new HSK 3.0 (levels N1–N7, ~11,000 words). Select which levels    */
+/*  are active with the deck bar at the top. Classic level 3 is on by  */
+/*  default. Custom words you add are always included.                 */
 /* ================================================================== */
 
 const PARTS_OF_SPEECH = [
@@ -77,12 +76,35 @@ function buildQuizOptions(card, allCards) {
   const distractors = [...shuffleArray(same), ...shuffleArray(other)].slice(0, 3);
   return shuffleArray([card, ...distractors]);
 }
+let _zhVoice = undefined; // undefined = not yet resolved; null = unavailable
+
+function resolveZhVoice() {
+  if (_zhVoice !== undefined) return;
+  const voices = window.speechSynthesis.getVoices();
+  _zhVoice = voices.find(v => v.lang === "zh-CN")
+    || voices.find(v => v.lang === "zh-TW")
+    || voices.find(v => v.lang.startsWith("zh"))
+    || null;
+}
+
 function speak(text) {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel();
+  const synth = window.speechSynthesis;
+  synth.cancel();
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = "zh-CN"; u.rate = 0.85;
-  window.speechSynthesis.speak(u);
+  u.lang = "zh-CN";
+  u.rate = 0.85;
+  const doSpeak = () => {
+    resolveZhVoice();
+    if (_zhVoice) u.voice = _zhVoice;
+    synth.speak(u);
+  };
+  // On some browsers (Chrome) voices load asynchronously on first use.
+  if (synth.getVoices().length === 0) {
+    synth.addEventListener("voiceschanged", doSpeak, { once: true });
+  } else {
+    doSpeak();
+  }
 }
 function getTheme(dark) {
   return dark
@@ -180,27 +202,41 @@ function ExampleBlock({ theme, card }) {
 
 /* ================================================================== */
 /*  DECK BAR — choose which HSK levels are active.                     */
+/*  Two rows: Classic HSK 2.0 (1–6) and New HSK 3.0 (N1–N7).          */
 /* ================================================================== */
+const LEVEL_ORDER = Object.fromEntries(
+  [...HSK_CLASSIC_LEVELS, ...HSK_NEW_LEVELS].map((l, i) => [l, i])
+);
+
 function DeckBar({ theme, levels, setLevels, deckSize }) {
   const toggle = (lvl) => {
     setLevels(prev => {
-      if (prev.includes(lvl)) return prev.length > 1 ? prev.filter(l => l !== lvl) : prev; // keep ≥1
-      return [...prev, lvl].sort((a, b) => a - b);
+      if (prev.includes(lvl)) return prev.length > 1 ? prev.filter(l => l !== lvl) : prev;
+      return [...prev, lvl].sort((a, b) => (LEVEL_ORDER[a] ?? 99) - (LEVEL_ORDER[b] ?? 99));
     });
   };
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 22, flexWrap: "wrap" }}>
-      <span style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, marginRight: 2 }}>HSK</span>
-      {HSK_LEVELS.map(lvl => {
+
+  const row = (rowLevels, label) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}>
+      <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, minWidth: 52, flexShrink: 0 }}>{label}</span>
+      {rowLevels.map(lvl => {
         const on = levels.includes(lvl);
+        const label = typeof lvl === "string" ? lvl.slice(1) : lvl;
         return (
           <button key={lvl} onClick={() => toggle(lvl)} className="btn-ghost"
-            style={{ width: 34, height: 34, borderRadius: 999, border: `1px solid ${on ? theme.accent : theme.border}`, background: on ? theme.accent : "transparent", color: on ? "#fff" : theme.textMute, fontSize: 14, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
-            {lvl}
+            style={{ width: 30, height: 30, borderRadius: 999, border: `1px solid ${on ? theme.accent : theme.border}`, background: on ? theme.accent : "transparent", color: on ? "#fff" : theme.textMute, fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
+            {label}
           </button>
         );
       })}
-      <span style={{ fontSize: 12, color: theme.textMute, marginLeft: "auto", fontVariantNumeric: "tabular-nums" }}>{deckSize.toLocaleString()} words</span>
+    </div>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 22 }}>
+      {row(HSK_CLASSIC_LEVELS, "Classic")}
+      {row(HSK_NEW_LEVELS, "New 3.0")}
+      <div style={{ fontSize: 12, color: theme.textMute, fontVariantNumeric: "tabular-nums" }}>{deckSize.toLocaleString()} words in deck</div>
     </div>
   );
 }
@@ -535,7 +571,7 @@ function LibraryView({ deck, progress, theme }) {
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="display" style={{ fontSize: 14, color: theme.text, fontStyle: "italic" }}>
                 {w.pinyin}
-                <span style={{ fontSize: 10, color: theme.textMute, marginLeft: 8, fontStyle: "normal", letterSpacing: "0.06em" }}>{w.source === "custom" ? "CUSTOM" : `HSK ${w.level}`}</span>
+                <span style={{ fontSize: 10, color: theme.textMute, marginLeft: 8, fontStyle: "normal", letterSpacing: "0.06em" }}>{w.source === "custom" ? "CUSTOM" : typeof w.level === "string" ? `New HSK ${w.level}` : `HSK ${w.level}`}</span>
               </div>
               <div style={{ fontSize: 13, color: theme.textMute, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.meaning}</div>
             </div>
