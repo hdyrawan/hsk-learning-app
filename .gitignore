@@ -24,6 +24,9 @@ Thumbs.db
 *.swp
 *.swo
 
+# Local documentation (kept local, not published to GitHub)
+docs/
+
 # Obsidian vault metadata
 .obsidian/
 Welcome.md
