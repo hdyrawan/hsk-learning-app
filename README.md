@@ -1,23 +1,36 @@
 # HSK Flashcard App
 
-A self-hosted flashcard app for studying Mandarin Chinese vocabulary across all classic HSK levels (1–6, ~5,000 words). Runs entirely in the browser — no account, no backend, no cloud sync required.
+A flashcard app for studying Mandarin Chinese vocabulary across both classic HSK 2.0 (levels 1–6) and new HSK 3.0 (levels N1–N7) — roughly 15,960 words total. Runs entirely in the browser with no account, no backend, and no cloud sync.
 
-![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-7-purple) ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
+**Live:** https://hsk.iraw.one
+
+![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-7-purple) ![Cloudflare](https://img.shields.io/badge/Cloudflare-Workers-F38020)
 
 ---
 
 ## What It Does
 
 - **Study** — flip cards (tap or keyboard shortcuts), filter by learning status
-- **Quiz** — multiple-choice questions from your active deck
+- **Quiz** — multiple-choice questions drawn from the active deck
 - **Today (Review)** — spaced-repetition queue showing only cards due today
-- **Library** — searchable list of all words with their current learning status
+- **Library** — searchable word list with level badges and SRS status
 - **Custom words** — add your own hanzi / pinyin / meaning entries
 - **Reverse mode** — show English first and recall the hanzi
 - **Dark mode** — toggle from the header
 - **Export / Import** — back up your progress and custom words to a JSON file
 
 All progress is saved in your browser's `localStorage`. Nothing is sent to a server.
+
+---
+
+## HSK Standards
+
+The deck bar at the top lets you choose which levels to study. Both standards can be active simultaneously.
+
+| Row | Standard | Levels | Words |
+|---|---|---|---|
+| Classic | HSK 2.0 (2010) | 1 – 6 | 4,991 |
+| New 3.0 | HSK 3.0 (2021) | N1 – N7 | 10,969 |
 
 ---
 
@@ -32,13 +45,17 @@ Each card has four levels. When you answer a card, it moves up or down:
 | 2 | Familiar | In 3 days |
 | 3 | Mastered | In 7 days |
 
-Answering **"I know this"** advances the card. Answering **"Still learning"** drops it back to Learning. The **Today** tab shows all cards whose review date has arrived.
+Answering **"I know this"** advances the card. Answering **"Still learning"** drops it back to Learning. The **Today** tab shows all cards whose review date has arrived. Sessions are capped at 40 cards so a large deck never becomes overwhelming.
 
 ---
 
 ## Quick Start
 
-### Option A — Docker (no Node.js needed)
+### Option A — Use the hosted version
+
+Open **https://hsk.iraw.one** in any browser. No install required.
+
+### Option B — Docker (self-host, no Node.js needed)
 
 ```bash
 git clone https://github.com/hdyrawan/hsk-learning-app.git
@@ -46,21 +63,14 @@ cd hsk-learning-app
 docker compose up --build -d
 ```
 
-Open in your browser:
-
-```
-http://localhost:8080
-```
+Open `http://localhost:8080`. To access from another device on the same network, use `hostname -I` to find your LAN IP and open `http://<LAN-IP>:8080`.
 
 To stop:
-
 ```bash
 docker compose down
 ```
 
-### Option B — Local dev server
-
-Requires **Node.js 22+**.
+### Option C — Local dev server (Node.js 22+ required)
 
 ```bash
 npm ci
@@ -71,32 +81,34 @@ Open `http://localhost:5173`.
 
 ---
 
-## Accessing from Another Device
+## Backing Up Progress
 
-The Docker container listens on all interfaces (`0.0.0.0:8080`). To open the app from a phone or another computer on the same Wi-Fi, find this machine's LAN IP:
+Progress and custom words live in your browser's `localStorage`. To move between devices:
 
-```bash
-hostname -I
-```
-
-Then open `http://<LAN-IP>:8080` from the other device.
+1. **Settings → Export JSON** — saves a backup file.
+2. On the new device: **Settings → Import JSON** — restores and merges it.
 
 ---
 
-## Backing Up Progress
+## Deploying Your Own Instance
 
-Progress and custom words live in the browser's `localStorage` and are not synced anywhere. To move to a different browser or device:
+The app deploys as a static bundle. The repo includes config for three platforms:
 
-1. Go to **Settings → Export JSON** to save a backup file.
-2. On the new device, go to **Settings → Import JSON** and select that file.
+| Platform | Config file | Deploy command |
+|---|---|---|
+| **Cloudflare Workers** | `wrangler.jsonc` | `npm run build && npx wrangler deploy` |
+| Vercel | `vercel.json` | Connect GitHub repo in dashboard |
+| Docker / nginx | `Dockerfile`, `docker-compose.yml` | `docker compose up --build -d` |
+
+For Cloudflare Workers, SPA routing is handled by `not_found_handling: single-page-application` in `wrangler.jsonc` — do not add a `_redirects` file alongside it (causes deploy error 100324).
 
 ---
 
 ## Vocabulary Data
 
-The word list is generated from [`drkameleon/complete-hsk-vocabulary`](https://github.com/drkameleon/complete-hsk-vocabulary) (MIT License), which covers the classic HSK 2.0 syllabus. The generator at `scripts/generate_hsk_words.py` selects the best learner-facing definition when a source entry has multiple dictionary forms (e.g. surname vs. common sense).
+The word list is generated from [`drkameleon/complete-hsk-vocabulary`](https://github.com/drkameleon/complete-hsk-vocabulary) (MIT License). The generator at `scripts/generate_hsk_words.py` selects the best learner-facing definition when a source entry has multiple dictionary forms.
 
-To regenerate the word list from the latest upstream data:
+To regenerate from the latest upstream data:
 
 ```bash
 curl -L -o /tmp/hsk.json \
@@ -112,18 +124,19 @@ python3 scripts/generate_hsk_words.py /tmp/hsk.json src/hskWords.js
 ```
 .
 ├── src/
-│   ├── main.jsx            # React entry point
-│   ├── HSKFlashcards.jsx   # All views, components, and SRS logic
-│   └── hskWords.js         # Generated HSK vocabulary (~5,000 words)
+│   ├── main.jsx               # React entry point
+│   ├── HSKFlashcards.jsx      # All views, components, and SRS logic
+│   └── hskWords.js            # Generated vocabulary (15,960 words) — do not edit
 ├── scripts/
-│   └── generate_hsk_words.py   # Converts upstream vocabulary JSON → hskWords.js
-├── index.html              # Vite HTML shell
-├── vite.config.js          # Vite + React plugin config
-├── Dockerfile              # Multi-stage build: Node (build) → nginx (serve)
-├── docker-compose.yml      # Runs the app on host port 8080
-├── nginx.conf              # Static file server with security headers
-├── package.json            # Dependencies and npm scripts
-└── .gitignore
+│   └── generate_hsk_words.py  # Converts upstream JSON → hskWords.js
+├── wrangler.jsonc             # Cloudflare Workers deployment config
+├── vercel.json                # Vercel SPA rewrite config
+├── Dockerfile                 # Multi-stage build: Node → nginx
+├── docker-compose.yml         # Self-hosted container on port 8080
+├── nginx.conf                 # Static server with security headers
+├── index.html                 # Vite HTML shell
+├── vite.config.js             # Vite + React plugin config
+└── package.json
 ```
 
 ---
@@ -134,10 +147,11 @@ python3 scripts/generate_hsk_words.py /tmp/hsk.json src/hskWords.js
 |---|---|
 | UI | React 19 |
 | Build tool | Vite 7 |
+| Hosting | Cloudflare Workers (static assets) |
 | Fonts | Noto Serif SC (hanzi), Fraunces, IBM Plex Sans |
-| Speech | Web Speech API (`zh-CN`) |
+| Pronunciation | Web Speech API (`zh-CN`) |
 | Storage | Browser `localStorage` |
-| Server | nginx (inside Docker) |
+| Self-hosted server | nginx in Docker |
 
 ---
 

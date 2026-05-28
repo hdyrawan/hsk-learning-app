@@ -26,11 +26,3 @@ Thumbs.db
 
 # Local documentation (kept local, not published to GitHub)
 docs/
-
-# Obsidian vault metadata
-.obsidian/
-Welcome.md
-
-# Codex/local agent metadata
-.codex/
-.agents/
