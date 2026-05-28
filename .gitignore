@@ -24,5 +24,6 @@ Thumbs.db
 *.swp
 *.swo
 
-# Local documentation (kept local, not published to GitHub)
+# Local documentation and AI tooling context (kept local, not published to GitHub)
 docs/
+CLAUDE.md
