@@ -28,10 +28,6 @@ Thumbs.db
 .obsidian/
 Welcome.md
 
-# Syncthing conflict files
-*.sync-conflict-*
-*.stfolder
-
 # Codex/local agent metadata
 .codex/
 .agents/

@@ -1,34 +1,49 @@
-# Data Quality
+# Vocabulary Data
 
-`hskWords.js` is generated from a classic HSK vocabulary source and contains about 5,000 entries. During review, several early entries showed incorrect pinyin or uncommon dictionary senses for normal HSK learning.
+`hskWords.js` is generated from `complete.json` in [`drkameleon/complete-hsk-vocabulary`](https://github.com/drkameleon/complete-hsk-vocabulary), which provides complete HSK 2.0 and HSK 3.0 vocabulary data under the MIT license.
 
-Examples:
+The app currently uses classic HSK 2.0 levels 1-6.
 
-| Hanzi | Current issue |
+## Why A Generator Is Needed
+
+The source data can contain multiple dictionary forms for one simplified word. For example, a word may include a surname, archaic sense, variant spelling, or alternate pronunciation before the common HSK learning sense. The app should show the learner-facing form.
+
+The generator in `scripts/generate_hsk_words.py` scores each form and prefers:
+
+- Lowercase pinyin over proper-name forms.
+- Particle meanings for particle entries.
+- Classifier meanings for measure words.
+- Common adverb meanings such as `still`, `all`, `both`, and `yet`.
+- Definitions that avoid surname, variant, abbreviation, and archaic-only senses.
+
+## Corrected Examples
+
+These entries were checked after regeneration:
+
+| Hanzi | Generated pinyin | Generated meaning |
 | --- | --- |
-| 个 | Listed as `gě`; common HSK particle/measure usage is `ge`. |
-| 吗 | Listed as `má`; common question particle is `ma`. |
-| 听 | Listed as `yǐn`; common HSK word is `tīng`. |
-| 都 | Meaning is a surname entry instead of common `all/both`. |
-| 书 | Meaning is an abbreviation entry instead of common `book`. |
+| 个 | `gè` | classifier used before a noun without a specific classifier |
+| 吗 | `ma` | question particle |
+| 听 | `tīng` | to listen to; to hear |
+| 都 | `dōu` | all; both; entirely |
+| 书 | `shū` | book; letter; document |
+| 还 | `hái` | still; yet |
 
-## Recommendation
+## Regeneration
 
-Before using this app seriously as a learning reference, replace or clean the vocabulary data with a source that includes:
+Download the canonical source JSON:
 
-- HSK-specific pinyin.
-- HSK-specific meanings.
-- Part of speech normalized for study use.
-- Optional example sentences.
-- Clear license information.
+```bash
+curl -L -o /tmp/complete-hsk-vocabulary.json https://raw.githubusercontent.com/drkameleon/complete-hsk-vocabulary/main/complete.json
+```
 
-## Implementation Options
+Regenerate the app data:
 
-1. Keep the app code and replace only `hskWords.js`.
-2. Add a validation script that checks known HSK 1-3 words against a curated correction list.
-3. Store corrections separately and merge them into the generated data at build time.
+```bash
+python3 scripts/generate_hsk_words.py /tmp/complete-hsk-vocabulary.json hskWords.js
+```
 
-The app itself can handle better data without major code changes as long as each word has:
+The output format remains:
 
 ```js
 {

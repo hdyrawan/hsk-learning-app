@@ -2,8 +2,6 @@
 
 A React flashcard app for studying classic HSK vocabulary. It includes study cards, quiz mode, daily review, a searchable library, custom words, local progress storage, export/import backup, dark mode, and reverse recall mode.
 
-This project is stored inside an Obsidian vault and synced with Syncthing. The app code is safe to sync, but generated folders such as `node_modules`, `dist`, and local Docker/runtime files should stay out of Git.
-
 ## Quick Start
 
 Run the production Docker container:
@@ -63,19 +61,14 @@ npm run build
 ├── Dockerfile                     # Multi-stage production build
 ├── docker-compose.yml             # Runs nginx on host port 8080
 ├── nginx.conf                     # Static app server config
+├── scripts/generate_hsk_words.py  # Vocabulary generator
 ├── docs/                          # Project notes and operating docs
 └── package.json                   # App scripts and dependencies
 ```
 
 ## Data Note
 
-`hskWords.js` is a generated file based on classic HSK 2.0 vocabulary. Some entries appear to have incorrect dictionary senses or pinyin for common HSK usage, so the data should be reviewed before relying on it as a polished learning source.
-
-Examples found during review:
-
-- `个` appears as `gě` instead of common HSK `ge`.
-- `吗` appears as `má` instead of question particle `ma`.
-- `听` appears as `yǐn` instead of common HSK `tīng`.
+`hskWords.js` is generated from `complete.json` in [`drkameleon/complete-hsk-vocabulary`](https://github.com/drkameleon/complete-hsk-vocabulary), which is MIT licensed. The generator keeps classic HSK 2.0 levels 1-6 and chooses a learner-facing form when the source entry has multiple dictionary forms.
 
 See [docs/DATA_QUALITY.md](docs/DATA_QUALITY.md).
 

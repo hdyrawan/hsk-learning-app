@@ -39,11 +39,19 @@ Generate or refresh `package-lock.json` without host Node:
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/app" -w /app node:22-alpine npm install --package-lock-only
 ```
 
+Regenerate `hskWords.js` from the canonical vocabulary source:
+
+```bash
+curl -L -o /tmp/complete-hsk-vocabulary.json https://raw.githubusercontent.com/drkameleon/complete-hsk-vocabulary/main/complete.json
+python3 scripts/generate_hsk_words.py /tmp/complete-hsk-vocabulary.json hskWords.js
+```
+
 ## App Architecture
 
 - `src/main.jsx` mounts the app into `#root`.
 - `HSK3Flashcards (revision).jsx` contains the app state, views, UI components, and SRS logic.
 - `hskWords.js` exports the generated vocabulary array and HSK level list.
+- `scripts/generate_hsk_words.py` converts `drkameleon/complete-hsk-vocabulary` data into the app format.
 - The Docker image builds with Node, then serves `dist/` from nginx.
 
 ## State Model
@@ -64,5 +72,4 @@ Two small app fixes were made after initial review:
 
 - Quiz redraw now reacts to the active deck identity instead of only the deck length.
 - Settings notices now clear their timeout on unmount.
-
-The main remaining technical risk is data quality in `hskWords.js`.
+- Vocabulary generation now selects learner-facing forms from multi-form dictionary entries.
