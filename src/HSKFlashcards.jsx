@@ -413,11 +413,11 @@ function CardBack({ theme, card, deck }) {
         </div>
         <span className="display" style={{ fontSize: 13, letterSpacing: "0.02em", textTransform: "none", color: theme.accent, fontStyle: "italic", whiteSpace: "nowrap" }}>{card.partOfSpeech}</span>
       </div>
-      <div className="display" style={{ fontSize: 22, fontStyle: "italic", marginBottom: 6, color: theme.text }}><TonePinyin theme={theme} text={card.pinyin} /></div>
-      <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 10, lineHeight: 1.5 }}>
+      <div className="display" style={{ fontSize: 22, fontStyle: "italic", marginBottom: 14, color: theme.text }}><TonePinyin theme={theme} text={card.pinyin} /></div>
+      <div style={{ marginBottom: 12 }}><Meaning theme={theme} meaning={card.meaning} /></div>
+      <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 20, lineHeight: 1.5 }}>
         {card.partOfSpeech} · <span className="hanzi">{posHelper(card.partOfSpeech).cn}</span> — {posHelper(card.partOfSpeech).tip}
       </div>
-      <div style={{ marginBottom: exampleFor(card) ? 20 : 0 }}><Meaning theme={theme} meaning={card.meaning} /></div>
       <ExampleBlock theme={theme} card={card} />
       <RelatedWordsPanel theme={theme} card={card} deck={deck} />
     </div>
