@@ -15,8 +15,9 @@ A flashcard app for studying Mandarin Chinese vocabulary across both classic HSK
 - **Today (Review)** — spaced-repetition queue showing only cards due today
 - **Library** — searchable word list with level badges and SRS status
 - **Custom words** — add your own hanzi / pinyin / meaning entries
-- **Example sentences** — every card shows a real usage sentence with translation, pulled from a curated lookup
+- **Example sentences** — every card shows a real usage sentence with pinyin and translation, pulled from a curated lookup
 - **Random study order** — each study session starts shuffled so you're not stuck in a fixed sequence
+- **Back / next** — step to the previous or next card (or use ← / → keys)
 - **Reverse mode** — show English first and recall the hanzi
 - **Dark mode** — toggle from the header
 - **Export / Import** — back up your progress and custom words to a JSON file
@@ -123,9 +124,9 @@ python3 scripts/generate_hsk_words.py /tmp/hsk.json src/hskWords.js
 
 Example sentences live separately in `src/hskExamples.js` — a lookup keyed by `hanzi`, so the 2.8 MB vocabulary file is never touched by this feature. In the UI, a card shows its own example if you added one (custom words), otherwise it falls back to the curated lookup (`HSK_EXAMPLES[hanzi]`).
 
-The corpus is built from [`Roxaleen/hsk-annotated-corpus`](https://github.com/Roxaleen/hsk-annotated-corpus): ~270,000 sentences from Tatoeba (CC BY 2.0 FR), Wiktionary via Kaikki, and the Leipzig Corpora Collection, each tagged with the HSK words it uses plus an English translation. The builder picks one natural, short example per word.
+The corpus is built from [`Roxaleen/hsk-annotated-corpus`](https://github.com/Roxaleen/hsk-annotated-corpus): ~270,000 sentences from Tatoeba (CC BY 2.0 FR), Wiktionary via Kaikki, and the Leipzig Corpora Collection, each tagged with the HSK words it uses plus an English translation. The builder picks one natural, short example per word. Example pinyin (tone-marked) is computed at build time with `pypinyin`, so the browser needs no pinyin library.
 
-To regenerate (the sentence file is large and hosted via git-LFS):
+To regenerate (needs `pip install pypinyin`; the sentence file is large and hosted via git-LFS):
 
 ```bash
 curl -L -o /tmp/sentences.json \

@@ -194,7 +194,7 @@ function exampleFor(card) {
   }
   const ex = HSK_EXAMPLES[card.hanzi];
   if (!ex) return null;
-  return { hanzi: ex.hanzi, pinyin: "", english: ex.english };
+  return { hanzi: ex.hanzi, pinyin: ex.pinyin || "", english: ex.english };
 }
 
 /* The example block is shared by Study + Review; it's skipped only when neither
@@ -296,6 +296,7 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
 
   const card = cards[index] || null;
   const next = useCallback(() => { setFlipped(false); setIndex(i => i + 1); }, []);
+  const prev = useCallback(() => { setFlipped(false); setIndex(i => (i - 1 + cards.length) % cards.length); }, [cards.length]);
   const grade = useCallback((correct) => { if (!card) return; onAnswer(card.id, correct); next(); }, [card, onAnswer, next]);
   const shuffle = () => { setOrder(shuffleArray(order)); setIndex(0); setFlipped(false); };
 
@@ -304,12 +305,13 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
       if (["INPUT", "TEXTAREA"].includes(e.target.tagName)) return;
       if (e.key === " ") { e.preventDefault(); setFlipped(f => !f); }
       else if (e.key === "ArrowRight") { e.preventDefault(); next(); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); prev(); }
       else if (e.key === "k" || e.key === "K") { e.preventDefault(); grade(true); }
       else if (e.key === "l" || e.key === "L") { e.preventDefault(); grade(false); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [next, grade]);
+  }, [next, prev, grade]);
 
   const counts = useMemo(() => {
     const c = { all: deck.length, New: 0, Learning: 0, Familiar: 0, Mastered: 0 };
@@ -364,11 +366,15 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
         <Button theme={theme} variant="primary" disabled={!card} onClick={() => grade(true)}>I know this <span style={{ opacity: 0.75, fontSize: 11, marginLeft: 4, fontFamily: "monospace" }}>K</span></Button>
       </div>
       <div className="dual-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <Button theme={theme} variant="subtle" disabled={!card} onClick={prev}>← Back</Button>
         <Button theme={theme} variant="subtle" disabled={!card} onClick={next}>Next →</Button>
+      </div>
+      <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
         <Button theme={theme} variant="subtle" onClick={shuffle}>Shuffle</Button>
       </div>
       <div style={{ fontSize: 11, color: theme.textMute, textAlign: "center", padding: "18px 0 0" }}>
         <Kbd theme={theme}>Space</Kbd> flip <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
+        <Kbd theme={theme}>←</Kbd> back <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
         <Kbd theme={theme}>→</Kbd> next <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
         <Kbd theme={theme}>K</Kbd> known <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
         <Kbd theme={theme}>L</Kbd> learning
@@ -534,6 +540,7 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
             <div style={{ fontSize: 16, color: theme.text }}>{card.meaning}</div>
             {(() => { const ex = exampleFor(card); return ex && <>
               <div className="hanzi" style={{ fontSize: 17, color: theme.textMute, lineHeight: 1.6, marginTop: 14 }}>{ex.hanzi}</div>
+              {ex.pinyin && <div className="display" style={{ fontSize: 13, color: theme.textMute, fontStyle: "italic", marginTop: 3 }}>{ex.pinyin}</div>}
               {ex.english && <div style={{ fontSize: 13, color: theme.textMute, marginTop: 4 }}>{ex.english}</div>}
             </>; })()}
           </div>

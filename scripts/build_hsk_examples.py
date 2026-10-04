@@ -24,8 +24,21 @@ an example as: card.exampleHanzi (user-created custom words) OR HSK_EXAMPLES[han
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
+
+
+def to_pinyin(text: str) -> str:
+    """Tone-marked pinyin for a sentence, computed at build time with pypinyin
+    so the browser doesn't need a pinyin library at runtime."""
+    try:
+        from pypinyin import Style, lazy_pinyin
+    except ImportError:
+        return ""
+    out = " ".join(lazy_pinyin(text, style=Style.TONE))
+    # Don't leave a stray space before CJK punctuation ("nà 。" -> "nà。").
+    return re.sub(r"\s+([，。？！、；：\"\"''（）])", r"\1", out)
 
 
 def source_rank(source: str | None) -> int:
@@ -78,7 +91,11 @@ def build_examples(sentences_path: Path, wanted: set[str]) -> dict[str, dict]:
     examples: dict[str, dict] = {}
     for word, candidates in by_word.items():
         best = min(candidates, key=lambda c: example_score(c, word))
-        examples[word] = {"hanzi": best["sentence"], "english": best["translation"].strip()}
+        examples[word] = {
+            "hanzi": best["sentence"],
+            "pinyin": to_pinyin(best["sentence"]),
+            "english": best["translation"].strip(),
+        }
     return examples
 
 
