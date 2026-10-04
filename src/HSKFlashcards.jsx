@@ -136,6 +136,20 @@ function EmptyState({ theme, hanzi, title, description, children }) {
     </div>
   );
 }
+function Confetti({ pieces = 16 }) {
+  const colors = ["#C0392B", "#D68910", "#27AE60", "#2471A3", "#8E44AD", "#E67E22"];
+  return (
+    <div style={{ position: "relative", height: 56, overflow: "hidden", pointerEvents: "none" }}>
+      {Array.from({ length: pieces }).map((_, i) => (
+        <span key={i} style={{
+          position: "absolute", top: -10, left: `${(i * 6.3) % 100}%`, width: 8, height: 8, borderRadius: 2,
+          background: colors[i % colors.length], opacity: 0.95,
+          animation: `confetti-fall ${1.2 + (i % 5) * 0.35}s ease-in ${(i % 8) * 0.12}s forwards`,
+        }} />
+      ))}
+    </div>
+  );
+}
 function Button({ theme, variant = "ghost", onClick, disabled, children, style }) {
   const base = { padding: "13px 16px", borderRadius: 10, fontSize: 14, fontWeight: 500, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.4 : 1, transition: "background 0.15s, opacity 0.15s, border-color 0.15s" };
   const v = {
@@ -344,6 +358,30 @@ function Meaning({ theme, meaning }) {
   );
 }
 
+/* Shared card-back face used by BOTH Study and Review, so learners get the
+   same support (POS helper, tone pinyin, primary meaning, example, related
+   words) regardless of which mode they're in. */
+function CardBack({ theme, card, deck }) {
+  return (
+    <div className="card-face card-back" style={{ ...cardFaceStyle(theme), justifyContent: "flex-start", overflow: "auto" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 18 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span className="hanzi" style={{ fontSize: 38, fontWeight: 500, color: theme.text, lineHeight: 1 }}>{card.hanzi}</span>
+          <PlayButton theme={theme} onClick={(e) => { e.stopPropagation(); speak(card.hanzi); }} />
+        </div>
+        <span className="display" style={{ fontSize: 13, letterSpacing: "0.02em", textTransform: "none", color: theme.accent, fontStyle: "italic", whiteSpace: "nowrap" }}>{card.partOfSpeech}</span>
+      </div>
+      <div className="display" style={{ fontSize: 22, fontStyle: "italic", marginBottom: 6, color: theme.text }}><TonePinyin theme={theme} text={card.pinyin} /></div>
+      <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 10, lineHeight: 1.5 }}>
+        {card.partOfSpeech} · <span className="hanzi">{posHelper(card.partOfSpeech).cn}</span> — {posHelper(card.partOfSpeech).tip}
+      </div>
+      <div style={{ marginBottom: exampleFor(card) ? 20 : 0 }}><Meaning theme={theme} meaning={card.meaning} /></div>
+      <ExampleBlock theme={theme} card={card} />
+      <RelatedWordsPanel theme={theme} card={card} deck={deck} />
+    </div>
+  );
+}
+
 /* ================================================================== */
 /*  DECK BAR — choose which HSK levels are active.                     */
 /*  Two rows: Classic HSK 2.0 (1–6) and New HSK 3.0 (N1–N7).          */
@@ -352,7 +390,7 @@ const LEVEL_ORDER = Object.fromEntries(
   [...HSK_CLASSIC_LEVELS, ...HSK_NEW_LEVELS].map((l, i) => [l, i])
 );
 
-function DeckBar({ theme, levels, setLevels, deckSize }) {
+function DeckBar({ theme, levels, setLevels, deckSize, levelStats }) {
   const toggle = (lvl) => {
     setLevels(prev => {
       if (prev.includes(lvl)) return prev.length > 1 ? prev.filter(l => l !== lvl) : prev;
@@ -361,16 +399,23 @@ function DeckBar({ theme, levels, setLevels, deckSize }) {
   };
 
   const row = (rowLevels, label) => (
-    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "nowrap" }}>
       <span style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, minWidth: 52, flexShrink: 0 }}>{label}</span>
       {rowLevels.map(lvl => {
         const on = levels.includes(lvl);
         const label = typeof lvl === "string" ? lvl.slice(1) : lvl;
+        const st = levelStats[lvl];
+        const pct = st && st.total ? st.mastered / st.total : 0;
         return (
-          <button key={lvl} onClick={() => toggle(lvl)} className="btn-ghost"
-            style={{ width: 30, height: 30, borderRadius: 999, border: `1px solid ${on ? theme.accent : theme.border}`, background: on ? theme.accent : "transparent", color: on ? "#fff" : theme.textMute, fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
-            {label}
-          </button>
+          <div key={lvl} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3 }}>
+            <button onClick={() => toggle(lvl)} className="btn-ghost" title={st ? `${st.mastered}/${st.total} mastered` : undefined}
+              style={{ width: 30, height: 30, borderRadius: 999, border: `1px solid ${on ? theme.accent : theme.border}`, background: on ? theme.accent : "transparent", color: on ? "#fff" : theme.textMute, fontSize: 12, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}>
+              {label}
+            </button>
+            <div style={{ width: 26, height: 3, borderRadius: 2, background: theme.border, overflow: "hidden" }}>
+              <div style={{ width: `${Math.round(pct * 100)}%`, height: "100%", background: pct >= 1 ? theme.good : theme.accent, transition: "width 0.3s ease" }} />
+            </div>
+          </div>
         );
       })}
     </div>
@@ -473,22 +518,7 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
               <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>{front}</div>
               <div style={{ textAlign: "center", color: theme.textMute, fontSize: 12, letterSpacing: "0.06em" }}>Tap to reveal · Space to flip</div>
             </div>
-            <div className="card-face card-back" style={{ ...cardFaceStyle(theme), justifyContent: "flex-start", overflow: "auto" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 18 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                  <span className="hanzi" style={{ fontSize: 38, fontWeight: 500, color: theme.text, lineHeight: 1 }}>{card.hanzi}</span>
-                  <PlayButton theme={theme} onClick={(e) => { e.stopPropagation(); speak(card.hanzi); }} />
-                </div>
-                <span className="display" style={{ fontSize: 13, letterSpacing: "0.02em", textTransform: "none", color: theme.accent, fontStyle: "italic", whiteSpace: "nowrap" }}>{card.partOfSpeech}</span>
-              </div>
-              <div className="display" style={{ fontSize: 22, fontStyle: "italic", marginBottom: 6, color: theme.text }}><TonePinyin theme={theme} text={card.pinyin} /></div>
-              <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 10, lineHeight: 1.5 }}>
-                {card.partOfSpeech} · <span className="hanzi">{posHelper(card.partOfSpeech).cn}</span> — {posHelper(card.partOfSpeech).tip}
-              </div>
-              <div style={{ marginBottom: exampleFor(card) ? 20 : 0 }}><Meaning theme={theme} meaning={card.meaning} /></div>
-              <ExampleBlock theme={theme} card={card} />
-              <RelatedWordsPanel theme={theme} card={card} deck={deck} />
-            </div>
+            <CardBack theme={theme} card={card} deck={deck} />
           </div>
         </div>
       ) : (
@@ -641,7 +671,8 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
   const card = remaining[pos] || null;
   if (!card) {
     return (
-      <EmptyState theme={theme} hanzi="成" title="Session complete" description={`You reviewed ${done} ${done === 1 ? "card" : "cards"}. Nicely done.`}>
+      <EmptyState theme={theme} hanzi="成" title="Session complete 🎉" description={`You reviewed ${done} ${done === 1 ? "card" : "cards"}. Keep the streak going!`}>
+        <Confetti />
         <div style={{ marginTop: 16 }}><Button theme={theme} variant="primary" onClick={() => setSessionIds(null)}>Back to overview</Button></div>
       </EmptyState>
     );
@@ -665,23 +696,7 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
             </div>
             <div style={{ textAlign: "center", color: theme.textMute, fontSize: 12 }}>Tap to reveal</div>
           </div>
-          <div className="card-face card-back" style={{ ...cardFaceStyle(theme), justifyContent: "center", textAlign: "center", overflow: "auto" }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 8 }}>
-              <span className="hanzi" style={{ fontSize: 34, color: theme.text }}>{card.hanzi}</span>
-              <PlayButton theme={theme} onClick={(e) => { e.stopPropagation(); speak(card.hanzi); }} />
-            </div>
-            <div className="display" style={{ fontSize: 20, fontStyle: "italic", marginBottom: 4, color: theme.text }}><TonePinyin theme={theme} text={card.pinyin} /></div>
-            <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 8, lineHeight: 1.5 }}>
-              {card.partOfSpeech} · <span className="hanzi">{posHelper(card.partOfSpeech).cn}</span> — {posHelper(card.partOfSpeech).tip}
-            </div>
-            <Meaning theme={theme} meaning={card.meaning} />
-            {(() => { const ex = exampleFor(card); return ex && <>
-              <div className="hanzi" style={{ fontSize: 17, color: theme.textMute, lineHeight: 1.6, marginTop: 14 }}>{ex.hanzi}</div>
-              {ex.pinyin && <div className="display" style={{ fontSize: 13, fontStyle: "italic", marginTop: 3 }}><TonePinyin theme={theme} text={ex.pinyin} /></div>}
-              {ex.english && <div style={{ fontSize: 13, color: theme.textMute, marginTop: 4 }}>{ex.english}</div>}
-            </>; })()}
-            <RelatedWordsPanel theme={theme} card={card} deck={deck} />
-          </div>
+          <CardBack theme={theme} card={card} deck={deck} />
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -1084,6 +1099,7 @@ function ExamView({ deck, theme }) {
     return (
       <div className="fade-in">
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 28, textAlign: "center", marginBottom: 16 }}>
+          {grade.passed && <Confetti />}
           <div className="display" style={{ fontSize: 52, fontWeight: 600, color: theme.text, lineHeight: 1 }}>
             {grade.score}<span style={{ fontSize: 18, color: theme.textMute }}> / {grade.maxScore}</span>
           </div>
@@ -1276,6 +1292,18 @@ export default function App() {
     return { total, known, learning, pct: total ? Math.round((known / total) * 100) : 0 };
   }, [deck, progress]);
 
+  // Mastered count per HSK level, for the per-level progress on the deck bar.
+  const levelStats = useMemo(() => {
+    const m = {};
+    deck.forEach(c => {
+      const k = c.level;
+      if (!m[k]) m[k] = { total: 0, mastered: 0 };
+      m[k].total++;
+      if (levelOf(progress, c.id) === 3) m[k].mastered++;
+    });
+    return m;
+  }, [deck, progress]);
+
   const dueCount = useMemo(() => deck.reduce((n, c) => n + (isDue(progress, c.id) ? 1 : 0), 0), [deck, progress]);
 
   return (
@@ -1283,6 +1311,7 @@ export default function App() {
       <FontLoader />
       <style>{`
         @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes confetti-fall { from { transform: translateY(0) rotate(0deg); opacity: 1; } to { transform: translateY(64px) rotate(360deg); opacity: 0; } }
         .fade-in { animation: fadeIn 0.3s ease-out; }
         .hanzi   { font-family: "Noto Serif SC", "Source Han Serif SC", serif; }
         .display { font-family: "Fraunces", Georgia, serif; }
@@ -1319,7 +1348,7 @@ export default function App() {
       </header>
 
       <main style={{ maxWidth: 640, margin: "0 auto", padding: "22px 20px 110px" }}>
-        <DeckBar theme={theme} levels={levels} setLevels={setLevels} deckSize={deck.length} />
+        <DeckBar theme={theme} levels={levels} setLevels={setLevels} deckSize={deck.length} levelStats={levelStats} />
         {view === "study"    && <StudyView   deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
         {view === "quiz"     && <QuizView    deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
         {view === "review"   && <ReviewView  deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
