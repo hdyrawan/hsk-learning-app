@@ -753,9 +753,246 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
 }
 
 /* ================================================================== */
+/*  EXAM VIEW — timed multiple-choice mock test (HSK-style)           */
+/*  Draws from the active deck. Scored /300, pass at >=180 / 60%.     */
+/*  Intentionally does NOT touch spaced-repetition progress — a test   */
+/*  shouldn't move your SRS state.                                     */
+/* ================================================================== */
+const EXAM_TIMER_MS = 45 * 1000; // pacing per question
+const EXAM_SIZES = [10, 20, 50];
+const EXAM_PASS_SCORE = 180;
+
+function fmtTime(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function ExamView({ deck, theme }) {
+  const [phase, setPhase] = useState("config"); // config | exam | result
+  const [size, setSize] = useState(20);
+  const [cur, setCur] = useState(0);
+  const [questions, setQuestions] = useState([]);
+  const [answers, setAnswers] = useState([]);
+  const [secondsLeft, setSecondsLeft] = useState(0);
+  const [grade, setGrade] = useState(null);
+  const [refFilter, setRefFilter] = useState("all");
+
+  // Refs so the timer callback never reads a stale snapshot of answers.
+  const liveRef = useRef({ questions: [], answers: [] });
+  liveRef.current = { questions, answers };
+  const endRef = useRef(0);
+
+  const handleGrade = useCallback(() => {
+    const { questions: qs, answers: an } = liveRef.current;
+    if (qs.length === 0) return;
+    let correct = 0;
+    qs.forEach((q, i) => { if (an[i] === q.card.id) correct++; });
+    const pct = correct / qs.length;
+    const score300 = Math.round(300 * pct);
+    setGrade({ score300, correct, total: qs.length, pct, passed: score300 >= EXAM_PASS_SCORE, answers: an });
+    setPhase("result");
+  }, []);
+
+  useEffect(() => {
+    if (phase !== "exam") return;
+    const tick = () => {
+      const left = Math.max(0, Math.round((endRef.current - Date.now()) / 1000));
+      setSecondsLeft(left);
+      if (left <= 0) handleGrade();
+    };
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [phase, handleGrade]);
+
+  const start = () => {
+    const n = Math.min(size, deck.length);
+    const drawn = shuffleArray([...deck]).slice(0, n);
+    const qs = drawn.map((card) => ({ card, options: buildQuizOptions(card, deck) }));
+    setQuestions(qs);
+    setAnswers(Array(n).fill(null));
+    setCur(0);
+    setGrade(null);
+    setRefFilter("all");
+    endRef.current = Date.now() + n * EXAM_TIMER_MS;
+    setSecondsLeft(Math.floor(n * EXAM_TIMER_MS / 1000));
+    setPhase("exam");
+  };
+
+  const choose = (i, optId) => setAnswers(prev => {
+    const c = [...prev];
+    c[i] = optId;
+    return c;
+  });
+
+  /* ---------- config ---------- */
+  if (phase === "config") {
+    const cap = Math.min(size, deck.length);
+    return (
+      <div className="fade-in">
+        <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 28, textAlign: "center", marginBottom: 16 }}>
+          <div className="hanzi" style={{ fontSize: 40, color: theme.accent, marginBottom: 8 }}>试</div>
+          <div className="display" style={{ fontSize: 20, fontWeight: 600, color: theme.text }}>HSK Mock Exam</div>
+          <div style={{ fontSize: 13, color: theme.textMute, marginTop: 8, lineHeight: 1.5 }}>
+            A timed multiple-choice exam drawn from your active deck. Scored out of 300; pass at {EXAM_PASS_SCORE}.
+          </div>
+          <div style={{ fontSize: 12, color: theme.textMute, marginTop: 12, fontVariantNumeric: "tabular-nums" }}>
+            {deck.length.toLocaleString()} words in the active deck
+          </div>
+        </div>
+
+        {deck.length < 4 ? (
+          <EmptyState theme={theme} hanzi="题" title="Need at least 4 words"
+            description="The exam builds multiple-choice questions from the active deck. Turn on an HSK level above or add custom words." />
+        ) : (
+          <>
+            <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, marginBottom: 10 }}>Questions</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
+              {EXAM_SIZES.map(n => {
+                const active = size === n;
+                const capped = deck.length < n;
+                return (
+                  <Button key={n} theme={theme} variant={active ? "primary" : "ghost"}
+                    onClick={() => setSize(n)}
+                    style={{ justifyContent: "center", opacity: capped ? 0.55 : 1, flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 18, fontWeight: 600 }}>{capped ? deck.length : n}</span>
+                    <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 400 }}>{capped ? "max avail" : "questions"}</span>
+                  </Button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 18 }}>
+              ~{cap} questions · about {Math.ceil(cap * EXAM_TIMER_MS / 60000)} min
+            </div>
+            <Button theme={theme} variant="primary" onClick={start} style={{ width: "100%" }}>Start exam</Button>
+            <div style={{ fontSize: 11, color: theme.textMute, textAlign: "center", marginTop: 12, lineHeight: 1.5 }}>
+              Your answers here won't affect your spaced-repetition progress.
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  /* ---------- result ---------- */
+  if (phase === "result" && grade) {
+    const wrong = grade.answers.filter((a, i) => a !== questions[i].card.id).length;
+    const shown = refFilter === "all" ? questions : questions.filter((_, i) => grade.answers[i] !== questions[i].card.id);
+    return (
+      <div className="fade-in">
+        <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 28, textAlign: "center", marginBottom: 16 }}>
+          <div className="display" style={{ fontSize: 52, fontWeight: 600, color: theme.text, lineHeight: 1 }}>
+            {grade.score300}<span style={{ fontSize: 18, color: theme.textMute }}> / 300</span>
+          </div>
+          <div style={{ marginTop: 12, display: "inline-block", padding: "6px 14px", borderRadius: 999, fontSize: 13, fontWeight: 600, letterSpacing: "0.04em",
+            background: grade.passed ? `${theme.good}1A` : `${theme.accent}1A`, color: grade.passed ? theme.good : theme.accent }}>
+            {grade.passed ? "PASS · 合格" : "FAIL · 不合格"}
+          </div>
+          <div style={{ fontSize: 13, color: theme.textMute, marginTop: 12, fontVariantNumeric: "tabular-nums" }}>
+            {grade.correct} / {grade.total} correct · {Math.round(grade.pct * 100)}%
+          </div>
+        </div>
+
+        <FilterTabs theme={theme} value={refFilter} onChange={setRefFilter}
+          tabs={[["all", "All", grade.total], ["wrong", "Mistakes", wrong]]} />
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+          {shown.map((q, idx) => {
+            const i = questions.indexOf(q);
+            const chose = grade.answers[i];
+            const isRight = chose === q.card.id;
+            const choseOpt = chose != null ? q.options.find(o => o.id === chose) : null;
+            return (
+              <div key={q.card.id} style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, color: theme.textMute, fontVariantNumeric: "tabular-nums", minWidth: 28 }}>{i + 1}.</span>
+                  <span className="hanzi" style={{ fontSize: 20, color: theme.text }}>{q.card.hanzi}</span>
+                  <PlayButton theme={theme} tiny onClick={() => speak(q.card.hanzi)} />
+                  <span style={{ flex: 1 }} />
+                  <span style={{ fontSize: 16 }}>{isRight ? "✓" : "✗"}</span>
+                </div>
+                <div className="display" style={{ fontSize: 13, color: theme.textMute, fontStyle: "italic", marginBottom: 4 }}>{q.card.pinyin}</div>
+                {isRight
+                  ? <div style={{ fontSize: 13, color: theme.text }}>you answered correctly · {q.card.meaning}</div>
+                  : <div style={{ fontSize: 13, lineHeight: 1.5 }}>
+                      <span style={{ color: theme.accent }}>You: {choseOpt ? choseOpt.meaning : "no answer"}</span>
+                      <span style={{ color: theme.textMute }}>{"  ·  "}Correct: {q.card.meaning}</span>
+                    </div>}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <Button theme={theme} variant="ghost" onClick={() => setPhase("config")}>Retake</Button>
+          <Button theme={theme} variant="primary" onClick={start}>New exam →</Button>
+        </div>
+      </div>
+    );
+  }
+
+  /* ---------- in-progress ---------- */
+  const q = questions[cur];
+  const unanswered = answers.filter(a => a == null).length;
+  return (
+    <div className="fade-in">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+        <span style={{ fontSize: 12, color: theme.textMute, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          Question {cur + 1} / {questions.length}
+        </span>
+        <span style={{ fontSize: 14, color: secondsLeft <= 60 ? theme.accent : theme.text, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+          ⏱ {fmtTime(secondsLeft)}
+        </span>
+      </div>
+
+      <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: "28px 20px", textAlign: "center", marginBottom: 12 }}>
+        <div className="hanzi" style={{ fontSize: "clamp(40px,11vw,72px)", fontWeight: 500, lineHeight: 1.1, color: theme.text }}>{q.card.hanzi}</div>
+        <div className="display" style={{ fontSize: 14, color: theme.textMute, fontStyle: "italic", marginTop: 10 }}>{q.card.pinyin}</div>
+      </div>
+
+      <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+        {q.options.map(opt => {
+          const sel = answers[cur] === opt.id;
+          return (
+            <Button key={opt.id} theme={theme} variant={sel ? "primary" : "ghost"} onClick={() => choose(cur, opt.id)}
+              style={{ textAlign: "left", justifyContent: "flex-start", cursor: "pointer" }}>
+              {opt.meaning}
+            </Button>
+          );
+        })}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 16 }}>
+        {questions.map((_, i) => {
+          const answered = answers[i] != null;
+          const active = i === cur;
+          return (
+            <button key={i} onClick={() => setCur(i)}
+              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${answered ? theme.accent : theme.border}`,
+                background: active ? theme.accent : (answered ? `${theme.accent}22` : theme.surface),
+                color: active ? "#fff" : (answered ? theme.accent : theme.textMute),
+                fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+              {i + 1}
+            </button>
+          );
+        })}
+      </div>
+      <div style={{ fontSize: 11, color: theme.textMute, textAlign: "center", marginBottom: 12 }}>
+        {unanswered > 0 ? `${unanswered} unanswered` : "All answered"}
+      </div>
+
+      <Button theme={theme} variant="primary" onClick={handleGrade} style={{ width: "100%" }}>
+        Submit exam{unanswered > 0 ? ` (${unanswered} unanswered)` : ""}
+      </Button>
+    </div>
+  );
+}
+
+/* ================================================================== */
 /*  MAIN APP                                                           */
 /* ================================================================== */
-const TABS = [["study", "Study"], ["quiz", "Quiz"], ["review", "Today"], ["library", "Library"], ["settings", "Settings"]];
+const TABS = [["study", "Study"], ["quiz", "Quiz"], ["review", "Today"], ["exam", "Exam"], ["library", "Library"], ["settings", "Settings"]];
 
 export default function App() {
   const [progress, setProgress]       = usePersistedState("hsk-progress", {});
@@ -832,6 +1069,7 @@ export default function App() {
         {view === "study"    && <StudyView   deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
         {view === "quiz"     && <QuizView    deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
         {view === "review"   && <ReviewView  deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
+        {view === "exam"     && <ExamView    deck={deck} theme={theme} />}
         {view === "library"  && <LibraryView deck={deck} progress={progress} theme={theme} />}
         {view === "settings" && <SettingsView customWords={customWords} setCustomWords={setCustomWords} progress={progress} setProgress={setProgress} darkMode={darkMode} setDarkMode={setDarkMode} theme={theme} />}
       </main>

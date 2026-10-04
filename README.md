@@ -12,6 +12,7 @@ A flashcard app for studying Mandarin Chinese vocabulary across both classic HSK
 
 - **Study** — flip cards (tap or keyboard shortcuts), filter by learning status
 - **Quiz** — multiple-choice questions drawn from the active deck
+- **Exam** — timed HSK-style mock test: multiple-choice /300, pass at 180, with a review breakdown afterward (doesn't affect your SRS progress)
 - **Today (Review)** — spaced-repetition queue showing only cards due today
 - **Library** — searchable word list with level badges and SRS status
 - **Custom words** — add your own hanzi / pinyin / meaning entries
