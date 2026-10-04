@@ -14,6 +14,7 @@ A flashcard app for studying Mandarin Chinese vocabulary across both classic HSK
 - **Study help** — every card back shows a plain-language parts-of-speech explanation and a "Words using this hanzi" panel, so a hard lone character is learned inside real words
 - **Readable presentation** — pinyin is tone-colored (1st≈red, 2nd≈orange, 3rd≈green, 4th≈blue); meanings lead with the primary sense behind a "+N more" expander; quiz/exam options show the primary meaning for at-a-glance reading; Study and Review card backs share the same layout
 - **Progress & celebration** — each level button shows its mastered progress; completing a Review session or passing the Exam gets a small confetti burst
+- **Motivation tracking** — a per-device 🔥 study streak, a daily review goal, and your best exam score are tracked (no login/account — saved in the browser and carried through Export/Import)
 - **Quiz** — multiple-choice questions drawn from the active deck
 - **Exam** — timed HSK-style mock test with **Listening, Reading, and Vocabulary** sections (/300, pass at 180). Listening plays the word audio; Reading is fill-in-the-blank from the example corpus; Vocabulary is word→meaning. Includes a review breakdown afterward and doesn't affect your SRS progress.
 - **Today / Review** — spaced-repetition queue showing only cards due today

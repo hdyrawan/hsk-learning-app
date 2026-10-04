@@ -22,6 +22,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SRS_LEVELS = ["New", "Learning", "Familiar", "Mastered"];
 const SRS_INTERVAL_DAYS = [0, 1, 3, 7];
 
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function yesterdayStr() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function blankState() {
   return { level: 0, nextReview: 0, lastReviewed: 0, correctCount: 0, incorrectCount: 0 };
 }
@@ -770,7 +780,7 @@ function LibraryView({ deck, progress, theme }) {
 /* ================================================================== */
 /*  SETTINGS VIEW                                                      */
 /* ================================================================== */
-function SettingsView({ customWords, setCustomWords, progress, setProgress, darkMode, setDarkMode, theme }) {
+function SettingsView({ customWords, setCustomWords, progress, setProgress, darkMode, setDarkMode, streak, setStreak, todayCount, goal, setGoal, bestScores, setBestScores, theme }) {
   const blankForm = { hanzi: "", pinyin: "", meaning: "", partOfSpeech: "noun", exampleHanzi: "", examplePinyin: "", exampleEnglish: "" };
   const [form, setForm] = useState(blankForm);
   const [notice, setNotice] = useState("");
@@ -800,7 +810,7 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
     setProgress(p => { const c = { ...p }; delete c[id]; return c; });
   };
   const exportData = () => {
-    const payload = { version: 3, exportedAt: new Date().toISOString(), progress, customWords, settings: { darkMode } };
+    const payload = { version: 4, exportedAt: new Date().toISOString(), progress, customWords, streak, todayCount, goal, bestScores, settings: { darkMode } };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -832,6 +842,10 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
           });
         }
         if (data.settings && typeof data.settings.darkMode === "boolean") setDarkMode(data.settings.darkMode);
+        if (data.streak && typeof data.streak.count === "number") setStreak(data.streak);
+        if (data.todayCount && typeof data.todayCount.count === "number") setTodayCount(data.todayCount);
+        if (typeof data.goal === "number") setGoal(data.goal);
+        if (data.bestScores && typeof data.bestScores === "object") setBestScores(data.bestScores);
         flash("Imported and merged your data.");
       } catch { flash("That file could not be read as valid JSON."); }
     };
@@ -856,6 +870,31 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
           <span style={{ fontSize: 14, color: theme.text }}>Dark mode</span>
           <Button theme={theme} variant={darkMode ? "primary" : "ghost"} onClick={() => setDarkMode(d => !d)} style={{ padding: "8px 16px" }}>{darkMode ? "On" : "Off"}</Button>
         </div>
+      </div>
+
+      <div style={section}>
+        <span style={label}>Learning</span>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontSize: 14, color: theme.text }}>Daily goal</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {[10, 20, 30, 50].map(n => (
+              <Button key={n} theme={theme} variant={goal === n ? "primary" : "ghost"} onClick={() => setGoal(n)} style={{ padding: "6px 12px", fontSize: 13 }}>{n}</Button>
+            ))}
+          </div>
+        </div>
+        <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 14, fontVariantNumeric: "tabular-nums" }}>
+          Today: {todayCount.count}/{goal} answered{todayCount.count >= goal ? " · goal met ✓" : ""}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <span style={{ fontSize: 14, color: theme.text }}>Streak 🔥 {streak.count}</span>
+          <Button theme={theme} variant="ghost" onClick={() => setStreak({ lastDate: "", count: 0 })} style={{ padding: "6px 12px", fontSize: 13 }}>Reset streak</Button>
+        </div>
+        {bestScores.best && (
+          <div style={{ fontSize: 12, color: theme.textMute, fontVariantNumeric: "tabular-nums" }}>
+            Best exam: <b style={{ color: bestScores.best.passed ? theme.good : theme.accent }}>{bestScores.best.score}</b>/{bestScores.best.maxScore} · {bestScores.best.passed ? "PASS" : "FAIL"} · {bestScores.best.date}
+            <button onClick={() => setBestScores({})} style={{ background: "transparent", border: "none", color: theme.accent, fontSize: 12, cursor: "pointer", marginLeft: 10 }}>Reset best</button>
+          </div>
+        )}
       </div>
 
       <div style={section}>
@@ -942,7 +981,7 @@ function buildQuestion(type, card, deck) {
   return { type, card, options };
 }
 
-function ExamView({ deck, theme }) {
+function ExamView({ deck, theme, bestScores, onFinish }) {
   const [phase, setPhase] = useState("config"); // config | exam | result
   const [size, setSize] = useState(10);
   const [activeSections, setActiveSections] = useState(SECTIONS.map(s => s.id));
@@ -978,9 +1017,11 @@ function ExamView({ deck, theme }) {
       score += s; maxScore += 100;
     });
     const passed = maxScore ? score >= maxScore * EXAM_PASS_RATIO : false;
-    setGrade({ score, maxScore, passed, sections, answers: an, total: qs.length, correct });
+    const result = { score, maxScore, passed, sections, answers: an, total: qs.length, correct };
+    setGrade(result);
+    if (onFinish) onFinish(result);
     setPhase("result");
-  }, []);
+  }, [onFinish]);
 
   useEffect(() => {
     if (phase !== "exam") return;
@@ -1044,6 +1085,11 @@ function ExamView({ deck, theme }) {
           <div style={{ fontSize: 12, color: theme.textMute, marginTop: 12, fontVariantNumeric: "tabular-nums" }}>
             {deck.length.toLocaleString()} words in the active deck
           </div>
+          {bestScores.best && (
+            <div style={{ fontSize: 12, color: theme.textMute, marginTop: 6, fontVariantNumeric: "tabular-nums" }}>
+              Best exam: <b style={{ color: bestScores.best.passed ? theme.good : theme.accent }}>{bestScores.best.score}</b>/{bestScores.best.maxScore} · {bestScores.best.passed ? "PASS 合格" : "FAIL"} · {bestScores.best.date}
+            </div>
+          )}
         </div>
 
         {deck.length < 4 ? (
@@ -1272,6 +1318,28 @@ export default function App() {
   const [levels, setLevels]           = usePersistedState("hsk-levels", [3]); // HSK 3 by default
   const [view, setView]               = useState("study");
 
+  // Motivation tracking (per device, no login): streak, today's count vs goal,
+  // and best exam score.
+  const [streak, setStreak]           = usePersistedState("hsk-streak", { lastDate: "", count: 0 });
+  const [todayCount, setTodayCount]   = usePersistedState("hsk-today", { date: todayStr(), count: 0 });
+  const [goal, setGoal]               = usePersistedState("hsk-goal", 20);
+  const [bestScores, setBestScores]   = usePersistedState("hsk-best-scores", {});
+
+  // Reset today's counter when the calendar day rolls over.
+  useEffect(() => {
+    if (todayCount.date !== todayStr()) setTodayCount({ date: todayStr(), count: 0 });
+  }, [todayCount, setTodayCount]);
+
+  const trackActivity = useCallback(() => {
+    const today = todayStr();
+    setStreak(prev => {
+      let count = prev.count;
+      if (prev.lastDate !== today) count = (prev.lastDate === yesterdayStr()) ? prev.count + 1 : 1;
+      return { lastDate: today, count };
+    });
+    setTodayCount(prev => ({ date: today, count: (prev.date === today ? prev.count : 0) + 1 }));
+  }, [setStreak, setTodayCount]);
+
   const theme = getTheme(darkMode);
 
   // Active deck = selected HSK levels + all custom words.
@@ -1282,8 +1350,21 @@ export default function App() {
   }, [levels, customWords]);
 
   const onAnswer = useCallback((cardId, correct) => {
+    trackActivity();
     setProgress(prev => ({ ...prev, [cardId]: applyAnswer(prev[cardId], correct) }));
-  }, [setProgress]);
+  }, [trackActivity, setProgress]);
+
+  const handleExamFinish = useCallback((grade) => {
+    if (!grade) return;
+    trackActivity();
+    setBestScores(prev => {
+      const best = prev.best;
+      if (!best || grade.score > best.score) {
+        return { ...prev, best: { score: grade.score, maxScore: grade.maxScore, passed: grade.passed, date: todayStr() } };
+      }
+      return prev;
+    });
+  }, [trackActivity, setBestScores]);
 
   const stats = useMemo(() => {
     const total = deck.length;
@@ -1305,6 +1386,10 @@ export default function App() {
   }, [deck, progress]);
 
   const dueCount = useMemo(() => deck.reduce((n, c) => n + (isDue(progress, c.id) ? 1 : 0), 0), [deck, progress]);
+
+  // Show a live streak only if studied today or yesterday (else it's broken).
+  const displayStreak = (streak.lastDate === todayStr() || streak.lastDate === yesterdayStr()) ? streak.count : 0;
+  const goalPct = goal > 0 ? Math.min(100, Math.round((todayCount.count / goal) * 100)) : 0;
 
   return (
     <div style={{ minHeight: "100vh", background: theme.bg, color: theme.text, fontFamily: '"IBM Plex Sans", system-ui, sans-serif', transition: "background 0.3s, color 0.3s" }}>
@@ -1333,7 +1418,9 @@ export default function App() {
         <div style={{ maxWidth: 640, margin: "0 auto", padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
           <div>
             <div className="display" style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>HSK <span className="hanzi" style={{ color: theme.accent }}>汉语</span></div>
-            <div style={{ fontSize: 10, color: theme.textMute, letterSpacing: "0.12em", textTransform: "uppercase", marginTop: 2 }}>{stats.known.toLocaleString()} mastered · {stats.pct}%</div>
+            <div style={{ fontSize: 10, color: theme.textMute, letterSpacing: "0.12em", textTransform: "uppercase", marginTop: 2 }}>
+              {stats.known.toLocaleString()} mastered · {stats.pct}% · 🔥 {displayStreak}
+            </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button onClick={() => setReverseMode(r => !r)} className="btn-ghost" title="Show English first; recall the hanzi"
@@ -1345,6 +1432,9 @@ export default function App() {
         <div style={{ height: 2, background: theme.border }}>
           <div style={{ height: "100%", width: `${stats.pct}%`, background: theme.accent, transition: "width 0.5s cubic-bezier(0.4,0,0.2,1)" }} />
         </div>
+        <div style={{ height: 2, background: theme.border, marginTop: 1 }}>
+          <div style={{ height: "100%", width: `${goalPct}%`, background: theme.good, transition: "width 0.5s cubic-bezier(0.4,0,0.2,1)" }} title={`${todayCount.count}/${goal} today`} />
+        </div>
       </header>
 
       <main style={{ maxWidth: 640, margin: "0 auto", padding: "22px 20px 110px" }}>
@@ -1352,9 +1442,10 @@ export default function App() {
         {view === "study"    && <StudyView   deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
         {view === "quiz"     && <QuizView    deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
         {view === "review"   && <ReviewView  deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
-        {view === "exam"     && <ExamView    deck={deck} theme={theme} />}
+        {view === "exam"     && <ExamView    deck={deck} theme={theme} bestScores={bestScores} onFinish={handleExamFinish} />}
         {view === "library"  && <LibraryView deck={deck} progress={progress} theme={theme} />}
-        {view === "settings" && <SettingsView customWords={customWords} setCustomWords={setCustomWords} progress={progress} setProgress={setProgress} darkMode={darkMode} setDarkMode={setDarkMode} theme={theme} />}
+        {view === "settings" && <SettingsView customWords={customWords} setCustomWords={setCustomWords} progress={progress} setProgress={setProgress} darkMode={darkMode} setDarkMode={setDarkMode}
+            streak={streak} setStreak={setStreak} todayCount={todayCount} goal={goal} setGoal={setGoal} bestScores={bestScores} setBestScores={setBestScores} theme={theme} />}
       </main>
 
       <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: theme.surface, borderTop: `1px solid ${theme.border}`, zIndex: 30, paddingBottom: "env(safe-area-inset-bottom)" }}>
