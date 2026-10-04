@@ -20,7 +20,6 @@ const PARTS_OF_SPEECH = [
 /* ================================================================== */
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SRS_LEVELS = ["New", "Learning", "Familiar", "Mastered"];
-const SRS_INTERVAL_DAYS = [0, 1, 3, 7];
 
 function todayStr() {
   const d = new Date();
@@ -33,19 +32,52 @@ function yesterdayStr() {
 }
 
 function blankState() {
-  return { level: 0, nextReview: 0, lastReviewed: 0, correctCount: 0, incorrectCount: 0 };
+  return { level: 0, ease: 2.5, interval: 0, reps: 0, lapses: 0, nextReview: 0, lastReviewed: 0, correctCount: 0, incorrectCount: 0 };
 }
-function applyAnswer(prev, correct) {
-  const state = prev || blankState();
-  const nextLevel = correct ? Math.min(3, state.level + 1) : Math.max(1, state.level - 1);
+
+// SM-2 / Anki-style scheduling. `mode` is "again" | "hard" | "good" | "easy".
+// - ease is the memory-strength multiplier (2.5 start, clamped to [1.3, 2.5]).
+// - interval grows per card by ease; a miss drops it back to 1 day and lowers ease.
+// - `level` is kept only as a display/filter level (0-3) derived from the interval.
+function applyAnswer(prev, mode) {
+  const s = prev || blankState();
+  const ts = Date.now();
+  let ease = typeof s.ease === "number" && s.ease ? s.ease : 2.5;
+  let interval = typeof s.interval === "number" ? s.interval : 0;
+  let reps = s.reps || 0;
+  let lapses = s.lapses || 0;
+
+  if (mode === "again") {
+    lapses += 1;
+    reps = 0;
+    interval = 1;                       // due tomorrow
+    ease = Math.max(1.3, ease - 0.20);
+  } else {
+    reps += 1;
+    if (reps === 1) {
+      interval = 1;                     // first success
+    } else if (mode === "hard") {
+      interval = Math.max(interval + 1, Math.round(interval * 1.2));
+      ease = Math.max(1.3, ease - 0.15);
+    } else if (mode === "good") {
+      interval = Math.round(interval * ease);
+    } else { /* easy */
+      interval = Math.round(interval * ease * 1.3);
+      ease = Math.min(2.5, ease + 0.15);
+    }
+  }
+
+  const level = interval <= 1 ? 1 : interval <= 7 ? 2 : 3;
   return {
-    level: nextLevel,
-    nextReview: Date.now() + SRS_INTERVAL_DAYS[nextLevel] * DAY_MS,
-    lastReviewed: Date.now(),
-    correctCount: state.correctCount + (correct ? 1 : 0),
-    incorrectCount: state.incorrectCount + (correct ? 0 : 1),
+    ...s, level, ease, interval, reps, lapses,
+    nextReview: ts + interval * DAY_MS,
+    lastReviewed: ts,
+    correctCount: s.correctCount + (mode !== "again" ? 1 : 0),
+    incorrectCount: s.incorrectCount + (mode === "again" ? 1 : 0),
   };
 }
+// Quiz/Exam only know right/wrong; map a boolean to an SM-2 mode.
+function answerToMode(correct) { return correct ? "good" : "again"; }
 function isDue(progress, cardId, now = Date.now()) {
   const s = progress[cardId];
   return !s || s.nextReview <= now;
@@ -482,7 +514,7 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
   const card = cards[index] || null;
   const next = useCallback(() => { setFlipped(false); setIndex(i => i + 1); }, []);
   const prev = useCallback(() => { setFlipped(false); setIndex(i => (i - 1 + cards.length) % cards.length); }, [cards.length]);
-  const grade = useCallback((correct) => { if (!card) return; onAnswer(card.id, correct); next(); }, [card, onAnswer, next]);
+  const grade = useCallback((mode) => { if (!card) return; onAnswer(card.id, mode); next(); }, [card, onAnswer, next]);
   const shuffle = () => { setOrder(shuffleArray(order)); setIndex(0); setFlipped(false); };
 
   useEffect(() => {
@@ -491,8 +523,10 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
       if (e.key === " ") { e.preventDefault(); setFlipped(f => !f); }
       else if (e.key === "ArrowRight") { e.preventDefault(); next(); }
       else if (e.key === "ArrowLeft") { e.preventDefault(); prev(); }
-      else if (e.key === "k" || e.key === "K") { e.preventDefault(); grade(true); }
-      else if (e.key === "l" || e.key === "L") { e.preventDefault(); grade(false); }
+      else if (e.key === "a" || e.key === "A") { e.preventDefault(); grade("again"); }
+      else if (e.key === "h" || e.key === "H") { e.preventDefault(); grade("hard"); }
+      else if (e.key === "g" || e.key === "G") { e.preventDefault(); grade("good"); }
+      else if (e.key === "e" || e.key === "E") { e.preventDefault(); grade("easy"); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
@@ -536,8 +570,10 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-        <Button theme={theme} variant="ghost" disabled={!card} onClick={() => grade(false)}>Still learning <span style={{ color: theme.textMute, fontSize: 11, marginLeft: 4, fontFamily: "monospace" }}>L</span></Button>
-        <Button theme={theme} variant="primary" disabled={!card} onClick={() => grade(true)}>I know this <span style={{ opacity: 0.75, fontSize: 11, marginLeft: 4, fontFamily: "monospace" }}>K</span></Button>
+        <Button theme={theme} variant="ghost" disabled={!card} onClick={() => grade("again")} style={{ color: theme.accent, borderColor: theme.accent }}>Again <span style={{ fontSize: 11, marginLeft: 4, fontFamily: "monospace", opacity: 0.6 }}>A</span></Button>
+        <Button theme={theme} variant="ghost" disabled={!card} onClick={() => grade("hard")}>Hard <span style={{ fontSize: 11, marginLeft: 4, fontFamily: "monospace", opacity: 0.6 }}>H</span></Button>
+        <Button theme={theme} variant="primary" disabled={!card} onClick={() => grade("good")}>Good <span style={{ fontSize: 11, marginLeft: 4, fontFamily: "monospace", opacity: 0.7 }}>G</span></Button>
+        <Button theme={theme} variant="ghost" disabled={!card} onClick={() => grade("easy")} style={{ color: theme.good, borderColor: theme.good }}>Easy <span style={{ fontSize: 11, marginLeft: 4, fontFamily: "monospace", opacity: 0.6 }}>E</span></Button>
       </div>
       <div className="dual-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         <Button theme={theme} variant="subtle" disabled={!card} onClick={prev}>← Back</Button>
@@ -550,8 +586,10 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
         <Kbd theme={theme}>Space</Kbd> flip <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
         <Kbd theme={theme}>←</Kbd> back <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
         <Kbd theme={theme}>→</Kbd> next <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
-        <Kbd theme={theme}>K</Kbd> known <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
-        <Kbd theme={theme}>L</Kbd> learning
+        <Kbd theme={theme}>A</Kbd> again <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
+        <Kbd theme={theme}>H</Kbd> hard <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
+        <Kbd theme={theme}>G</Kbd> good <span style={{ margin: "0 8px", opacity: 0.4 }}>·</span>
+        <Kbd theme={theme}>E</Kbd> easy
       </div>
     </div>
   );
@@ -585,7 +623,7 @@ function QuizView({ deck, progress, onAnswer, reverseMode, theme }) {
     if (picked) return;
     setPicked(opt.id);
     const correct = opt.id === card.id;
-    onAnswer(card.id, correct);
+    onAnswer(card.id, answerToMode(correct));
     setScore(s => ({ correct: s.correct + (correct ? 1 : 0), total: s.total + 1 }));
   };
 
@@ -687,7 +725,7 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
       </EmptyState>
     );
   }
-  const grade = (correct) => { onAnswer(card.id, correct); setDone(d => d + 1); setFlipped(false); setPos(p => p + 1); };
+  const grade = (mode) => { onAnswer(card.id, mode); setDone(d => d + 1); setFlipped(false); setPos(p => p + 1); };
 
   return (
     <div className="fade-in">
@@ -710,9 +748,11 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
         </div>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <Button theme={theme} variant="ghost" onClick={() => grade(false)}>Still learning</Button>
-        <Button theme={theme} variant="primary" onClick={() => grade(true)}>I know this</Button>
-      </div>
+              <Button theme={theme} variant="ghost" onClick={() => grade("again")} style={{ color: theme.accent, borderColor: theme.accent }}>Again</Button>
+              <Button theme={theme} variant="ghost" onClick={() => grade("hard")}>Hard</Button>
+              <Button theme={theme} variant="primary" onClick={() => grade("good")}>Good</Button>
+              <Button theme={theme} variant="ghost" onClick={() => grade("easy")} style={{ color: theme.good, borderColor: theme.good }}>Easy</Button>
+            </div>
     </div>
   );
 }
@@ -1349,9 +1389,9 @@ export default function App() {
     return [...hsk, ...customWords];
   }, [levels, customWords]);
 
-  const onAnswer = useCallback((cardId, correct) => {
+  const onAnswer = useCallback((cardId, mode) => {
     trackActivity();
-    setProgress(prev => ({ ...prev, [cardId]: applyAnswer(prev[cardId], correct) }));
+    setProgress(prev => ({ ...prev, [cardId]: applyAnswer(prev[cardId], mode) }));
   }, [trackActivity, setProgress]);
 
   const handleExamFinish = useCallback((grade) => {

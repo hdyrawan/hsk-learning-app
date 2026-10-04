@@ -44,16 +44,16 @@ The deck bar at the top lets you choose which levels to study. Both standards ca
 
 ## How Spaced Repetition Works
 
-Each card has four levels. When you answer a card, it moves up or down:
+Reviews use an **SM-2 (Anki-style) scheduler**. Every card carries a memory-strength *ease factor* (starts at 2.5) and a growing review *interval*. Instead of two buttons, you grade each card with four, and the interval adapts to your history:
 
-| Level | Name | Next review |
-|---|---|---|
-| 0 | New | Immediately |
-| 1 | Learning | Tomorrow |
-| 2 | Familiar | In 3 days |
-| 3 | Mastered | In 7 days |
+| Grade | What it does |
+|---|---|
+| **Again** | forgot it — back to 1 day, ease −0.20 (card gets weaker) |
+| **Hard** | interval × ~1.2, ease −0.15 |
+| **Good** | interval × ease (standard growth) |
+| **Easy** | interval × ease × 1.3, ease +0.15 |
 
-Answering **"I know this"** advances the card. Answering **"Still learning"** drops it back to Learning. The **Today** tab shows all cards whose review date has arrived. Sessions are capped at 40 cards so a large deck never becomes overwhelming.
+A card you keep getting right drifts to weeks between reviews; one you keep forgetting stays near-daily and its ease drops so it stays fresh. The display level (**New / Learning / Familiar / Mastered**) is derived from the current interval, so the existing filters, badges, and stats keep working. Keyboard: **A / H / G / E** to grade in Study mode. The **Review** tab shows all cards due today; a session is capped at 40 cards so a big deck never becomes overwhelming.
 
 ---
 
