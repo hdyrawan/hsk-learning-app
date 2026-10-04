@@ -208,7 +208,7 @@ function ExampleBlock({ theme, card }) {
         Example <PlayButton theme={theme} tiny onClick={(e) => { e.stopPropagation(); speak(ex.hanzi); }} />
       </div>
       <div className="hanzi" style={{ fontSize: 20, color: theme.text, lineHeight: 1.6, marginBottom: 8 }}>{ex.hanzi}</div>
-      {ex.pinyin && <div className="display" style={{ fontSize: 15, color: theme.textMute, fontStyle: "italic", lineHeight: 1.5, marginBottom: 6 }}>{ex.pinyin}</div>}
+      {ex.pinyin && <div className="display" style={{ fontSize: 15, fontStyle: "italic", lineHeight: 1.5, marginBottom: 6 }}><TonePinyin theme={theme} text={ex.pinyin} /></div>}
       {ex.english && <div style={{ fontSize: 14, color: theme.textMute, lineHeight: 1.5 }}>{ex.english}</div>}
     </div>
   );
@@ -280,6 +280,66 @@ function RelatedWordsPanel({ theme, card, deck }) {
           </button>
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
+/*  LEARNING-FRIENDLY RENDERING — primary-meaning-first + tone pinyin  */
+/* ================================================================== */
+function senses(meaning) {
+  return String(meaning || "").split(";").map(s => s.trim()).filter(Boolean);
+}
+function primaryMeaning(meaning) {
+  const s = senses(meaning);
+  return s.length ? s[0] : String(meaning || "");
+}
+
+const TONE_CHAR = {
+  "ā":1, "ē":1, "ī":1, "ō":1, "ū":1, "ǖ":1,
+  "á":2, "é":2, "í":2, "ó":2, "ú":2, "ǘ":2,
+  "ǎ":3, "ě":3, "ǐ":3, "ǒ":3, "ǔ":3, "ǚ":3,
+  "à":4, "è":4, "ì":4, "ò":4, "ù":4, "ǜ":4,
+};
+function syllableTone(syllable) {
+  for (const ch of syllable) { const t = TONE_CHAR[ch]; if (t) return t; }
+  return 0; // no tone mark = neutral
+}
+// Color each pinyin syllable by tone (1st≈red, 2nd≈orange, 3rd≈green, 4th≈blue)
+// so the reader sees tone at a glance — a standard Chinese-reading aid.
+function TonePinyin({ theme, text }) {
+  if (!text) return null;
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const colored = ["", "#C0392B", "#D68910", "#27AE60", "#2471A3"];
+  return (
+    <>
+      {tokens.map((tok, i) => {
+        const tone = syllableTone(tok);
+        return <span key={i} style={{ color: tone === 0 ? theme.textMute : colored[tone] }}>
+          {tok}{i < tokens.length - 1 ? "\u00A0" : ""}
+        </span>;
+      })}
+    </>
+  );
+}
+
+// Show the primary sense prominently and tuck the remaining senses behind a
+// small expander instead of a wall of "a; b; c; d".
+function Meaning({ theme, meaning }) {
+  const parts = senses(meaning);
+  const [more, setMore] = useState(false);
+  if (parts.length === 0) return null;
+  if (parts.length === 1) return <div style={{ fontSize: 17, color: theme.text, lineHeight: 1.45 }}>{parts[0]}</div>;
+  return (
+    <div>
+      <div style={{ fontSize: 17, color: theme.text, lineHeight: 1.45, display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 8 }}>
+        <span>{parts[0]}</span>
+        <button onClick={() => setMore(m => !m)}
+          style={{ background: "transparent", border: "none", color: theme.accent, fontSize: 12, cursor: "pointer", padding: 0 }}>
+          {more ? "less" : `+${parts.length - 1} more`}
+        </button>
+      </div>
+      {more && <div style={{ fontSize: 14, color: theme.textMute, lineHeight: 1.5, marginTop: 6 }}>{parts.slice(1).join(" · ")}</div>}
     </div>
   );
 }
@@ -419,13 +479,13 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
                   <span className="hanzi" style={{ fontSize: 38, fontWeight: 500, color: theme.text, lineHeight: 1 }}>{card.hanzi}</span>
                   <PlayButton theme={theme} onClick={(e) => { e.stopPropagation(); speak(card.hanzi); }} />
                 </div>
-                <span className="display" style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: theme.accent, fontStyle: "italic", whiteSpace: "nowrap" }}>{card.partOfSpeech}</span>
+                <span className="display" style={{ fontSize: 13, letterSpacing: "0.02em", textTransform: "none", color: theme.accent, fontStyle: "italic", whiteSpace: "nowrap" }}>{card.partOfSpeech}</span>
               </div>
-              <div className="display" style={{ fontSize: 22, color: theme.text, fontStyle: "italic", marginBottom: 6 }}>{card.pinyin}</div>
+              <div className="display" style={{ fontSize: 22, fontStyle: "italic", marginBottom: 6, color: theme.text }}><TonePinyin theme={theme} text={card.pinyin} /></div>
               <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 10, lineHeight: 1.5 }}>
                 {card.partOfSpeech} · <span className="hanzi">{posHelper(card.partOfSpeech).cn}</span> — {posHelper(card.partOfSpeech).tip}
               </div>
-              <div style={{ fontSize: 17, color: theme.text, lineHeight: 1.45, marginBottom: exampleFor(card) ? 20 : 0 }}>{card.meaning}</div>
+              <div style={{ marginBottom: exampleFor(card) ? 20 : 0 }}><Meaning theme={theme} meaning={card.meaning} /></div>
               <ExampleBlock theme={theme} card={card} />
               <RelatedWordsPanel theme={theme} card={card} deck={deck} />
             </div>
@@ -491,8 +551,8 @@ function QuizView({ deck, progress, onAnswer, reverseMode, theme }) {
 
   if (!card) return <EmptyState theme={theme} hanzi="题" title="Need at least 4 words" description="Quiz mode builds multiple-choice questions from the active deck. Turn on an HSK level above or add custom words." />;
 
-  const prompt = reverseMode ? card.meaning : card.hanzi;
-  const labelOf = (opt) => reverseMode ? opt.hanzi : opt.meaning;
+  const prompt = reverseMode ? primaryMeaning(card.meaning) : card.hanzi;
+  const labelOf = (opt) => reverseMode ? opt.hanzi : primaryMeaning(opt.meaning);
 
   return (
     <div className="fade-in">
@@ -610,14 +670,14 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
               <span className="hanzi" style={{ fontSize: 34, color: theme.text }}>{card.hanzi}</span>
               <PlayButton theme={theme} onClick={(e) => { e.stopPropagation(); speak(card.hanzi); }} />
             </div>
-            <div className="display" style={{ fontSize: 20, color: theme.text, fontStyle: "italic", marginBottom: 4 }}>{card.pinyin}</div>
+            <div className="display" style={{ fontSize: 20, fontStyle: "italic", marginBottom: 4, color: theme.text }}><TonePinyin theme={theme} text={card.pinyin} /></div>
             <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 8, lineHeight: 1.5 }}>
               {card.partOfSpeech} · <span className="hanzi">{posHelper(card.partOfSpeech).cn}</span> — {posHelper(card.partOfSpeech).tip}
             </div>
-            <div style={{ fontSize: 16, color: theme.text }}>{card.meaning}</div>
+            <Meaning theme={theme} meaning={card.meaning} />
             {(() => { const ex = exampleFor(card); return ex && <>
               <div className="hanzi" style={{ fontSize: 17, color: theme.textMute, lineHeight: 1.6, marginTop: 14 }}>{ex.hanzi}</div>
-              {ex.pinyin && <div className="display" style={{ fontSize: 13, color: theme.textMute, fontStyle: "italic", marginTop: 3 }}>{ex.pinyin}</div>}
+              {ex.pinyin && <div className="display" style={{ fontSize: 13, fontStyle: "italic", marginTop: 3 }}><TonePinyin theme={theme} text={ex.pinyin} /></div>}
               {ex.english && <div style={{ fontSize: 13, color: theme.textMute, marginTop: 4 }}>{ex.english}</div>}
             </>; })()}
             <RelatedWordsPanel theme={theme} card={card} deck={deck} />
@@ -673,7 +733,7 @@ function LibraryView({ deck, progress, theme }) {
             <div className="hanzi" style={{ fontSize: 26, color: theme.text, minWidth: 52, lineHeight: 1 }}>{w.hanzi}</div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="display" style={{ fontSize: 14, color: theme.text, fontStyle: "italic" }}>
-                {w.pinyin}
+                <TonePinyin theme={theme} text={w.pinyin} />
                 <span style={{ fontSize: 10, color: theme.textMute, marginLeft: 8, fontStyle: "normal", letterSpacing: "0.06em" }}>{w.source === "custom" ? "CUSTOM" : typeof w.level === "string" ? `New HSK ${w.level}` : `HSK ${w.level}`}</span>
               </div>
               <div style={{ fontSize: 13, color: theme.textMute, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{w.meaning}</div>
@@ -1070,10 +1130,10 @@ function ExamView({ deck, theme }) {
                 <div className="display" style={{ fontSize: 13, color: theme.textMute, fontStyle: "italic", marginBottom: 6 }}>{q.card.pinyin}</div>
                 {fullSentence && <div className="hanzi" style={{ fontSize: 15, color: theme.textMute, lineHeight: 1.6, marginBottom: 6 }}>{fullSentence}</div>}
                 {isRight
-                  ? <div style={{ fontSize: 13, color: theme.text }}>you answered correctly · {q.card.meaning}</div>
+                  ? <div style={{ fontSize: 13, color: theme.text }}>you answered correctly · {primaryMeaning(q.card.meaning)}</div>
                   : <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-                      <span style={{ color: theme.accent }}>You: {choseOpt ? (q.type === "reading" ? choseOpt.hanzi : choseOpt.meaning) : "no answer"}</span>
-                      <span style={{ color: theme.textMute }}>{"  ·  "}Correct: {q.type === "reading" ? q.card.hanzi : q.card.meaning}</span>
+                      <span style={{ color: theme.accent }}>You: {choseOpt ? (q.type === "reading" ? choseOpt.hanzi : primaryMeaning(choseOpt.meaning)) : "no answer"}</span>
+                      <span style={{ color: theme.textMute }}>{"  ·  "}Correct: {q.type === "reading" ? q.card.hanzi : primaryMeaning(q.card.meaning)}</span>
                     </div>}
               </div>
             );
@@ -1122,7 +1182,7 @@ function ExamView({ deck, theme }) {
         {q.type === "vocab" && (
           <>
             <div className="hanzi" style={{ fontSize: 26, color: theme.text }}>{q.card.hanzi}</div>
-            <div className="display" style={{ fontSize: 14, color: theme.textMute, fontStyle: "italic", marginTop: 8 }}>{q.card.pinyin}</div>
+            <div className="display" style={{ fontSize: 14, fontStyle: "italic", marginTop: 8 }}><TonePinyin theme={theme} text={q.card.pinyin} /></div>
             <div style={{ fontSize: 12, color: theme.textMute, marginTop: 12 }}>Choose the meaning.</div>
           </>
         )}
@@ -1134,7 +1194,7 @@ function ExamView({ deck, theme }) {
           return (
             <Button key={opt.id} theme={theme} variant={sel ? "primary" : "ghost"} onClick={() => choose(cur, opt.id)}
               style={{ textAlign: "left", justifyContent: "flex-start", cursor: "pointer" }}>
-              {q.type === "reading" ? <span className="hanzi" style={{ fontSize: 19 }}>{opt.hanzi}</span> : opt.meaning}
+              {q.type === "reading" ? <span className="hanzi" style={{ fontSize: 19 }}>{opt.hanzi}</span> : primaryMeaning(opt.meaning)}
             </Button>
           );
         })}
@@ -1186,7 +1246,7 @@ function ExamView({ deck, theme }) {
 /* ================================================================== */
 /*  MAIN APP                                                           */
 /* ================================================================== */
-const TABS = [["study", "Study"], ["quiz", "Quiz"], ["review", "Today"], ["exam", "Exam"], ["library", "Library"], ["settings", "Settings"]];
+const TABS = [["study", "Study"], ["quiz", "Quiz"], ["review", "Review"], ["exam", "Exam"], ["library", "Library"], ["settings", "Settings"]];
 
 export default function App() {
   const [progress, setProgress]       = usePersistedState("hsk-progress", {});
