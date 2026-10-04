@@ -753,14 +753,21 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
 }
 
 /* ================================================================== */
-/*  EXAM VIEW — timed multiple-choice mock test (HSK-style)           */
-/*  Draws from the active deck. Scored /300, pass at >=180 / 60%.     */
-/*  Intentionally does NOT touch spaced-repetition progress — a test   */
-/*  shouldn't move your SRS state.                                     */
+/*  EXAM VIEW — timed HSK-style mock test                             */
+/*  Three sections: Listening (听力, audio), Reading (阅读, fill the   */
+/*  blank from our example corpus), Vocabulary (词汇, word → meaning). */
+/*  Each section is scored /100 → total /300, pass at 60%.             */
+/*  Intentionally does NOT touch spaced-repetition progress.           */
 /* ================================================================== */
 const EXAM_TIMER_MS = 45 * 1000; // pacing per question
-const EXAM_SIZES = [10, 20, 50];
-const EXAM_PASS_SCORE = 180;
+const EXAM_SIZES = [10, 20];
+const EXAM_PASS_RATIO = 0.6;
+const SECTIONS = [
+  { id: "listening", label: "Listening", hanzi: "听力" },
+  { id: "reading",   label: "Reading",   hanzi: "阅读" },
+  { id: "vocab",     label: "Vocabulary", hanzi: "词汇" },
+];
+const SECT_META = Object.fromEntries(SECTIONS.map(s => [s.id, s]));
 
 function fmtTime(totalSeconds) {
   const m = Math.floor(totalSeconds / 60);
@@ -768,9 +775,24 @@ function fmtTime(totalSeconds) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function readingUsable(card) {
+  const ex = HSK_EXAMPLES[card.hanzi];
+  return !!ex && ex.hanzi.includes(card.hanzi);
+}
+
+function buildQuestion(type, card, deck) {
+  const options = buildQuizOptions(card, deck);
+  if (type === "reading") {
+    const ex = HSK_EXAMPLES[card.hanzi];
+    return { type, card, options, sentence: ex.hanzi.replace(card.hanzi, "＿＿＿") };
+  }
+  return { type, card, options };
+}
+
 function ExamView({ deck, theme }) {
   const [phase, setPhase] = useState("config"); // config | exam | result
-  const [size, setSize] = useState(20);
+  const [size, setSize] = useState(10);
+  const [activeSections, setActiveSections] = useState(SECTIONS.map(s => s.id));
   const [cur, setCur] = useState(0);
   const [questions, setQuestions] = useState([]);
   const [answers, setAnswers] = useState([]);
@@ -786,11 +808,24 @@ function ExamView({ deck, theme }) {
   const handleGrade = useCallback(() => {
     const { questions: qs, answers: an } = liveRef.current;
     if (qs.length === 0) return;
+    const secCount = {}, secCorr = {};
     let correct = 0;
-    qs.forEach((q, i) => { if (an[i] === q.card.id) correct++; });
-    const pct = correct / qs.length;
-    const score300 = Math.round(300 * pct);
-    setGrade({ score300, correct, total: qs.length, pct, passed: score300 >= EXAM_PASS_SCORE, answers: an });
+    qs.forEach((q, i) => {
+      secCount[q.type] = (secCount[q.type] || 0) + 1;
+      const right = an[i] === q.card.id;
+      if (right) { secCorr[q.type] = (secCorr[q.type] || 0) + 1; correct++; }
+    });
+    const types = [...new Set(qs.map(q => q.type))];
+    const sections = {};
+    let score = 0, maxScore = 0;
+    types.forEach(t => {
+      const total = secCount[t] || 0, c = secCorr[t] || 0;
+      const s = total ? Math.round(100 * c / total) : 0;
+      sections[t] = { score: s, correct: c, total };
+      score += s; maxScore += 100;
+    });
+    const passed = maxScore ? score >= maxScore * EXAM_PASS_RATIO : false;
+    setGrade({ score, maxScore, passed, sections, answers: an, total: qs.length, correct });
     setPhase("result");
   }, []);
 
@@ -806,17 +841,29 @@ function ExamView({ deck, theme }) {
     return () => clearInterval(iv);
   }, [phase, handleGrade]);
 
+  // Auto-play audio when a Listening question is shown.
+  useEffect(() => {
+    if (phase !== "exam") return;
+    const q = questions[cur];
+    if (q && q.type === "listening") speak(q.card.hanzi);
+  }, [cur, phase, questions]);
+
   const start = () => {
-    const n = Math.min(size, deck.length);
-    const drawn = shuffleArray([...deck]).slice(0, n);
-    const qs = drawn.map((card) => ({ card, options: buildQuizOptions(card, deck) }));
+    const qs = [];
+    for (const sec of SECTIONS) {
+      if (!activeSections.includes(sec.id)) continue;
+      const src = sec.id === "reading" ? shuffleArray(deck.filter(readingUsable)) : shuffleArray([...deck]);
+      const n = Math.min(size, src.length);
+      for (let k = 0; k < n; k++) qs.push(buildQuestion(sec.id, src[k], deck));
+    }
+    if (qs.length === 0) return;
     setQuestions(qs);
-    setAnswers(Array(n).fill(null));
+    setAnswers(Array(qs.length).fill(null));
     setCur(0);
     setGrade(null);
     setRefFilter("all");
-    endRef.current = Date.now() + n * EXAM_TIMER_MS;
-    setSecondsLeft(Math.floor(n * EXAM_TIMER_MS / 1000));
+    endRef.current = Date.now() + qs.length * EXAM_TIMER_MS;
+    setSecondsLeft(Math.floor(qs.length * EXAM_TIMER_MS / 1000));
     setPhase("exam");
   };
 
@@ -826,16 +873,20 @@ function ExamView({ deck, theme }) {
     return c;
   });
 
+  const toggleSection = (id) => setActiveSections(prev =>
+    prev.includes(id) ? (prev.length > 1 ? prev.filter(x => x !== id) : prev) : [...prev, id]
+  );
+
   /* ---------- config ---------- */
   if (phase === "config") {
-    const cap = Math.min(size, deck.length);
+    const totalQ = activeSections.length * size;
     return (
       <div className="fade-in">
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 28, textAlign: "center", marginBottom: 16 }}>
           <div className="hanzi" style={{ fontSize: 40, color: theme.accent, marginBottom: 8 }}>试</div>
           <div className="display" style={{ fontSize: 20, fontWeight: 600, color: theme.text }}>HSK Mock Exam</div>
           <div style={{ fontSize: 13, color: theme.textMute, marginTop: 8, lineHeight: 1.5 }}>
-            A timed multiple-choice exam drawn from your active deck. Scored out of 300; pass at {EXAM_PASS_SCORE}.
+            Listening · Reading · Vocabulary. Each section out of 100 → total /300; pass at 60%.
           </div>
           <div style={{ fontSize: 12, color: theme.textMute, marginTop: 12, fontVariantNumeric: "tabular-nums" }}>
             {deck.length.toLocaleString()} words in the active deck
@@ -844,27 +895,40 @@ function ExamView({ deck, theme }) {
 
         {deck.length < 4 ? (
           <EmptyState theme={theme} hanzi="题" title="Need at least 4 words"
-            description="The exam builds multiple-choice questions from the active deck. Turn on an HSK level above or add custom words." />
+            description="The exam builds questions from the active deck. Turn on an HSK level above or add custom words." />
         ) : (
           <>
-            <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, marginBottom: 10 }}>Questions</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 14 }}>
-              {EXAM_SIZES.map(n => {
-                const active = size === n;
-                const capped = deck.length < n;
+            <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, marginBottom: 10 }}>Sections</div>
+            <div style={{ display: "grid", gap: 8, marginBottom: 18 }}>
+              {SECTIONS.map(sec => {
+                const on = activeSections.includes(sec.id);
+                const cantRead = sec.id === "reading" && deck.filter(readingUsable).length < 4;
                 return (
-                  <Button key={n} theme={theme} variant={active ? "primary" : "ghost"}
-                    onClick={() => setSize(n)}
-                    style={{ justifyContent: "center", opacity: capped ? 0.55 : 1, flexDirection: "column", gap: 2 }}>
-                    <span style={{ fontSize: 18, fontWeight: 600 }}>{capped ? deck.length : n}</span>
-                    <span style={{ fontSize: 10, opacity: 0.75, fontWeight: 400 }}>{capped ? "max avail" : "questions"}</span>
+                  <Button key={sec.id} theme={theme} variant={on ? "primary" : "ghost"} onClick={() => toggleSection(sec.id)}
+                    style={{ justifyContent: "space-between", opacity: cantRead ? 0.55 : 1 }}>
+                    <span>{sec.label}</span>
+                    <span className="hanzi" style={{ fontSize: 16 }}>{sec.hanzi}</span>
                   </Button>
                 );
               })}
             </div>
-            <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 18 }}>
-              ~{cap} questions · about {Math.ceil(cap * EXAM_TIMER_MS / 60000)} min
+
+            <div style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, marginBottom: 10 }}>Questions per section</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+              {EXAM_SIZES.map(n => {
+                const active = size === n;
+                return (
+                  <Button key={n} theme={theme} variant={active ? "primary" : "ghost"} onClick={() => setSize(n)}>
+                    {n}
+                  </Button>
+                );
+              })}
             </div>
+
+            <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 18 }}>
+              {totalQ} questions · about {Math.ceil(totalQ * EXAM_TIMER_MS / 60000)} min
+            </div>
+
             <Button theme={theme} variant="primary" onClick={start} style={{ width: "100%" }}>Start exam</Button>
             <div style={{ fontSize: 11, color: theme.textMute, textAlign: "center", marginTop: 12, lineHeight: 1.5 }}>
               Your answers here won't affect your spaced-repetition progress.
@@ -883,14 +947,25 @@ function ExamView({ deck, theme }) {
       <div className="fade-in">
         <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 28, textAlign: "center", marginBottom: 16 }}>
           <div className="display" style={{ fontSize: 52, fontWeight: 600, color: theme.text, lineHeight: 1 }}>
-            {grade.score300}<span style={{ fontSize: 18, color: theme.textMute }}> / 300</span>
+            {grade.score}<span style={{ fontSize: 18, color: theme.textMute }}> / {grade.maxScore}</span>
           </div>
           <div style={{ marginTop: 12, display: "inline-block", padding: "6px 14px", borderRadius: 999, fontSize: 13, fontWeight: 600, letterSpacing: "0.04em",
             background: grade.passed ? `${theme.good}1A` : `${theme.accent}1A`, color: grade.passed ? theme.good : theme.accent }}>
             {grade.passed ? "PASS · 合格" : "FAIL · 不合格"}
           </div>
           <div style={{ fontSize: 13, color: theme.textMute, marginTop: 12, fontVariantNumeric: "tabular-nums" }}>
-            {grade.correct} / {grade.total} correct · {Math.round(grade.pct * 100)}%
+            {grade.correct} / {grade.total} correct · {Math.round(100 * grade.correct / grade.total)}%
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 14 }}>
+            {SECTIONS.filter(s => grade.sections[s.id]).map(s => {
+              const g = grade.sections[s.id];
+              const op = (g.correct * 100 / g.total);
+              return (
+                <span key={s.id} style={{ padding: "5px 12px", borderRadius: 999, fontSize: 12, background: theme.surfaceAlt, color: theme.text, border: `1px solid ${theme.border}` }}>
+                  <span className="hanzi">{s.hanzi}</span> <b>{g.score}</b>/100 · {op >= 60 ? "✓" : "✗"}
+                </span>
+              );
+            })}
           </div>
         </div>
 
@@ -903,21 +978,24 @@ function ExamView({ deck, theme }) {
             const chose = grade.answers[i];
             const isRight = chose === q.card.id;
             const choseOpt = chose != null ? q.options.find(o => o.id === chose) : null;
+            const fullSentence = q.type === "reading" ? HSK_EXAMPLES[q.card.hanzi]?.hanzi : null;
             return (
               <div key={q.card.id} style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 10, padding: "12px 14px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                  <span style={{ fontSize: 12, color: theme.textMute, fontVariantNumeric: "tabular-nums", minWidth: 28 }}>{i + 1}.</span>
+                  <span style={{ fontSize: 11, color: theme.textMute, minWidth: 16 }}>{SECT_META[q.type].hanzi}</span>
+                  <span style={{ fontSize: 12, color: theme.textMute, fontVariantNumeric: "tabular-nums", minWidth: 24 }}>{i + 1}.</span>
                   <span className="hanzi" style={{ fontSize: 20, color: theme.text }}>{q.card.hanzi}</span>
                   <PlayButton theme={theme} tiny onClick={() => speak(q.card.hanzi)} />
                   <span style={{ flex: 1 }} />
                   <span style={{ fontSize: 16 }}>{isRight ? "✓" : "✗"}</span>
                 </div>
-                <div className="display" style={{ fontSize: 13, color: theme.textMute, fontStyle: "italic", marginBottom: 4 }}>{q.card.pinyin}</div>
+                <div className="display" style={{ fontSize: 13, color: theme.textMute, fontStyle: "italic", marginBottom: 6 }}>{q.card.pinyin}</div>
+                {fullSentence && <div className="hanzi" style={{ fontSize: 15, color: theme.textMute, lineHeight: 1.6, marginBottom: 6 }}>{fullSentence}</div>}
                 {isRight
                   ? <div style={{ fontSize: 13, color: theme.text }}>you answered correctly · {q.card.meaning}</div>
                   : <div style={{ fontSize: 13, lineHeight: 1.5 }}>
-                      <span style={{ color: theme.accent }}>You: {choseOpt ? choseOpt.meaning : "no answer"}</span>
-                      <span style={{ color: theme.textMute }}>{"  ·  "}Correct: {q.card.meaning}</span>
+                      <span style={{ color: theme.accent }}>You: {choseOpt ? (q.type === "reading" ? choseOpt.hanzi : choseOpt.meaning) : "no answer"}</span>
+                      <span style={{ color: theme.textMute }}>{"  ·  "}Correct: {q.type === "reading" ? q.card.hanzi : q.card.meaning}</span>
                     </div>}
               </div>
             );
@@ -935,10 +1013,12 @@ function ExamView({ deck, theme }) {
   /* ---------- in-progress ---------- */
   const q = questions[cur];
   const unanswered = answers.filter(a => a == null).length;
+  const sec = SECT_META[q.type];
   return (
     <div className="fade-in">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <span style={{ fontSize: 12, color: theme.textMute, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          <span className="hanzi" style={{ marginRight: 6 }}>{sec.hanzi}</span>
           Question {cur + 1} / {questions.length}
         </span>
         <span style={{ fontSize: 14, color: secondsLeft <= 60 ? theme.accent : theme.text, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
@@ -946,9 +1026,28 @@ function ExamView({ deck, theme }) {
         </span>
       </div>
 
-      <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: "28px 20px", textAlign: "center", marginBottom: 12 }}>
-        <div className="hanzi" style={{ fontSize: "clamp(40px,11vw,72px)", fontWeight: 500, lineHeight: 1.1, color: theme.text }}>{q.card.hanzi}</div>
-        <div className="display" style={{ fontSize: 14, color: theme.textMute, fontStyle: "italic", marginTop: 10 }}>{q.card.pinyin}</div>
+      <div style={{ background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: "30px 20px", textAlign: "center", marginBottom: 12 }}>
+        {q.type === "listening" && (
+          <>
+            <PlayButton theme={theme} onClick={() => speak(q.card.hanzi)} />
+            <div style={{ fontSize: 13, color: theme.textMute, marginTop: 14, lineHeight: 1.5 }}>
+              Listen to the word, then choose its meaning.
+            </div>
+          </>
+        )}
+        {q.type === "reading" && (
+          <>
+            <div className="hanzi" style={{ fontSize: "clamp(19px,5.4vw,26px)", lineHeight: 1.7, color: theme.text }}>{q.sentence}</div>
+            <div style={{ fontSize: 12, color: theme.textMute, marginTop: 12 }}>Choose the word that best completes the sentence.</div>
+          </>
+        )}
+        {q.type === "vocab" && (
+          <>
+            <div className="hanzi" style={{ fontSize: 26, color: theme.text }}>{q.card.hanzi}</div>
+            <div className="display" style={{ fontSize: 14, color: theme.textMute, fontStyle: "italic", marginTop: 8 }}>{q.card.pinyin}</div>
+            <div style={{ fontSize: 12, color: theme.textMute, marginTop: 12 }}>Choose the meaning.</div>
+          </>
+        )}
       </div>
 
       <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
@@ -957,32 +1056,49 @@ function ExamView({ deck, theme }) {
           return (
             <Button key={opt.id} theme={theme} variant={sel ? "primary" : "ghost"} onClick={() => choose(cur, opt.id)}
               style={{ textAlign: "left", justifyContent: "flex-start", cursor: "pointer" }}>
-              {opt.meaning}
+              {q.type === "reading" ? <span className="hanzi" style={{ fontSize: 19 }}>{opt.hanzi}</span> : opt.meaning}
             </Button>
           );
         })}
       </div>
 
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "center", marginBottom: 16 }}>
-        {questions.map((_, i) => {
-          const answered = answers[i] != null;
-          const active = i === cur;
-          return (
-            <button key={i} onClick={() => setCur(i)}
-              style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${answered ? theme.accent : theme.border}`,
-                background: active ? theme.accent : (answered ? `${theme.accent}22` : theme.surface),
-                color: active ? "#fff" : (answered ? theme.accent : theme.textMute),
-                fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
-              {i + 1}
-            </button>
-          );
-        })}
-      </div>
-      <div style={{ fontSize: 11, color: theme.textMute, textAlign: "center", marginBottom: 12 }}>
+      {SECTIONS.filter(s => activeSections.includes(s.id) && questions.some((qq, i) => qq.type === s.id && i < questions.length)).map(secRow => {
+        const idxs = questions.map((qq, i) => qq.type === secRow.id ? i : -1).filter(i => i >= 0);
+        return (
+          <div key={secRow.id} style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: theme.textMute, marginBottom: 6 }}>
+              <span className="hanzi">{secRow.hanzi}</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {idxs.map(i => {
+                const answered = answers[i] != null;
+                const active = i === cur;
+                return (
+                  <button key={i} onClick={() => setCur(i)}
+                    style={{ width: 30, height: 30, borderRadius: 8, border: `1px solid ${answered ? theme.accent : theme.border}`,
+                      background: active ? theme.accent : (answered ? `${theme.accent}22` : theme.surface),
+                      color: active ? "#fff" : (answered ? theme.accent : theme.textMute),
+                      fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
+                    {i + 1}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+
+      <div style={{ fontSize: 11, color: theme.textMute, textAlign: "center", marginTop: 4, marginBottom: 14 }}>
         {unanswered > 0 ? `${unanswered} unanswered` : "All answered"}
       </div>
 
-      <Button theme={theme} variant="primary" onClick={handleGrade} style={{ width: "100%" }}>
+      <div className="dual-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+        <Button theme={theme} variant="subtle" disabled={cur === 0} onClick={() => setCur(i => i - 1)}>← Previous</Button>
+        {cur === questions.length - 1
+          ? <Button theme={theme} variant="primary" onClick={handleGrade}>Submit exam</Button>
+          : <Button theme={theme} variant="subtle" onClick={() => setCur(i => i + 1)}>Next →</Button>}
+      </div>
+      <Button theme={theme} variant="subtle" onClick={handleGrade} style={{ width: "100%" }}>
         Submit exam{unanswered > 0 ? ` (${unanswered} unanswered)` : ""}
       </Button>
     </div>
