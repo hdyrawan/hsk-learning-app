@@ -15,6 +15,8 @@ A flashcard app for studying Mandarin Chinese vocabulary across both classic HSK
 - **Today (Review)** — spaced-repetition queue showing only cards due today
 - **Library** — searchable word list with level badges and SRS status
 - **Custom words** — add your own hanzi / pinyin / meaning entries
+- **Example sentences** — every card shows a real usage sentence with translation, pulled from a curated lookup
+- **Random study order** — each study session starts shuffled so you're not stuck in a fixed sequence
 - **Reverse mode** — show English first and recall the hanzi
 - **Dark mode** — toggle from the header
 - **Export / Import** — back up your progress and custom words to a JSON file
@@ -104,17 +106,32 @@ For Cloudflare Workers, SPA routing is handled by `not_found_handling: single-pa
 
 ---
 
-## Vocabulary Data
+## Vocabulary & Example Data
 
 The word list is generated from [`drkameleon/complete-hsk-vocabulary`](https://github.com/drkameleon/complete-hsk-vocabulary) (MIT License). The generator at `scripts/generate_hsk_words.py` selects the best learner-facing definition when a source entry has multiple dictionary forms.
 
-To regenerate from the latest upstream data:
+To regenerate the word list from the latest upstream data:
 
 ```bash
 curl -L -o /tmp/hsk.json \
   https://raw.githubusercontent.com/drkameleon/complete-hsk-vocabulary/main/complete.json
 
 python3 scripts/generate_hsk_words.py /tmp/hsk.json src/hskWords.js
+```
+
+### Example sentences
+
+Example sentences live separately in `src/hskExamples.js` — a lookup keyed by `hanzi`, so the 2.8 MB vocabulary file is never touched by this feature. In the UI, a card shows its own example if you added one (custom words), otherwise it falls back to the curated lookup (`HSK_EXAMPLES[hanzi]`).
+
+The corpus is built from [`Roxaleen/hsk-annotated-corpus`](https://github.com/Roxaleen/hsk-annotated-corpus): ~270,000 sentences from Tatoeba (CC BY 2.0 FR), Wiktionary via Kaikki, and the Leipzig Corpora Collection, each tagged with the HSK words it uses plus an English translation. The builder picks one natural, short example per word.
+
+To regenerate (the sentence file is large and hosted via git-LFS):
+
+```bash
+curl -L -o /tmp/sentences.json \
+  https://media.githubusercontent.com/media/Roxaleen/hsk-annotated-corpus/main/export/json/sentences.json
+
+python3 scripts/build_hsk_examples.py /tmp/sentences.json src/hskWords.js src/hskExamples.js
 ```
 
 ---
@@ -126,9 +143,11 @@ python3 scripts/generate_hsk_words.py /tmp/hsk.json src/hskWords.js
 ├── src/
 │   ├── main.jsx               # React entry point
 │   ├── HSKFlashcards.jsx      # All views, components, and SRS logic
-│   └── hskWords.js            # Generated vocabulary (15,960 words) — do not edit
+│   ├── hskWords.js            # Generated vocabulary (15,960 words) — do not edit
+│   └── hskExamples.js         # Generated example-sentence lookup (keyed by hanzi) — do not edit
 ├── scripts/
-│   └── generate_hsk_words.py  # Converts upstream JSON → hskWords.js
+│   ├── generate_hsk_words.py  # Converts upstream JSON → hskWords.js
+│   └── build_hsk_examples.py  # Builds hskExamples.js from the annotated corpus
 ├── wrangler.jsonc             # Cloudflare Workers deployment config
 ├── vercel.json                # Vercel SPA rewrite config
 ├── Dockerfile                 # Multi-stage build: Node → nginx
@@ -158,3 +177,4 @@ python3 scripts/generate_hsk_words.py /tmp/hsk.json src/hskWords.js
 ## License
 
 Vocabulary data is from [`drkameleon/complete-hsk-vocabulary`](https://github.com/drkameleon/complete-hsk-vocabulary), licensed MIT.
+Example sentences are derived from the [`Roxaleen/hsk-annotated-corpus`](https://github.com/Roxaleen/hsk-annotated-corpus) collection, whose underlying sources are Tatoeba (CC BY 2.0 FR), Wiktionary via Kaikki (CC BY-SA), and the Leipzig Corpora Collection.

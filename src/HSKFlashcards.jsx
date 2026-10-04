@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { HSK_WORDS, HSK_CLASSIC_LEVELS, HSK_NEW_LEVELS } from "./hskWords";
+import { HSK_EXAMPLES } from "./hskExamples";
 
 /* ================================================================== */
 /*  Supports both classic HSK 2.0 (levels 1–6, ~5,000 words) and      */
@@ -184,18 +185,31 @@ function FontLoader() {
   return null;
 }
 
-/* The example block is shared by Study + Review and is skipped when a
-   word has no example sentence (true for most bulk-imported words). */
+/* Examples come from the card itself (user-added custom words) or from the
+   curated HSK_EXAMPLES lookup, so nearly every word now shows a real usage
+   sentence instead of only custom words. */
+function exampleFor(card) {
+  if (card.exampleHanzi) {
+    return { hanzi: card.exampleHanzi, pinyin: card.examplePinyin || "", english: card.exampleEnglish || "" };
+  }
+  const ex = HSK_EXAMPLES[card.hanzi];
+  if (!ex) return null;
+  return { hanzi: ex.hanzi, pinyin: "", english: ex.english };
+}
+
+/* The example block is shared by Study + Review; it's skipped only when neither
+   the card nor the curated lookup has an example for this word. */
 function ExampleBlock({ theme, card }) {
-  if (!card.exampleHanzi) return null;
+  const ex = exampleFor(card);
+  if (!ex) return null;
   return (
     <div style={{ paddingTop: 18, borderTop: `1px solid ${theme.border}`, marginTop: 4 }}>
       <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.textMute, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
-        Example <PlayButton theme={theme} tiny onClick={(e) => { e.stopPropagation(); speak(card.exampleHanzi); }} />
+        Example <PlayButton theme={theme} tiny onClick={(e) => { e.stopPropagation(); speak(ex.hanzi); }} />
       </div>
-      <div className="hanzi" style={{ fontSize: 20, color: theme.text, lineHeight: 1.6, marginBottom: 8 }}>{card.exampleHanzi}</div>
-      {card.examplePinyin && <div className="display" style={{ fontSize: 15, color: theme.textMute, fontStyle: "italic", lineHeight: 1.5, marginBottom: 6 }}>{card.examplePinyin}</div>}
-      {card.exampleEnglish && <div style={{ fontSize: 14, color: theme.textMute, lineHeight: 1.5 }}>{card.exampleEnglish}</div>}
+      <div className="hanzi" style={{ fontSize: 20, color: theme.text, lineHeight: 1.6, marginBottom: 8 }}>{ex.hanzi}</div>
+      {ex.pinyin && <div className="display" style={{ fontSize: 15, color: theme.textMute, fontStyle: "italic", lineHeight: 1.5, marginBottom: 6 }}>{ex.pinyin}</div>}
+      {ex.english && <div style={{ fontSize: 14, color: theme.textMute, lineHeight: 1.5 }}>{ex.english}</div>}
     </div>
   );
 }
@@ -249,7 +263,9 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
   const [search, setSearch] = useState("");
   const [index, setIndex] = useState(0);
   const [flipped, setFlipped] = useState(false);
-  const [order, setOrder] = useState(() => deck.map(c => c.id));
+  // Start every study session in a random order so you're not stuck in the
+  // fixed pinyin-sorted sequence. The Shuffle button re-randomizes anytime.
+  const [order, setOrder] = useState(() => shuffleArray(deck.map(c => c.id)));
 
   useEffect(() => {
     setOrder(prev => {
@@ -334,7 +350,7 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
                 <span className="display" style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: theme.accent, fontStyle: "italic", whiteSpace: "nowrap" }}>{card.partOfSpeech}</span>
               </div>
               <div className="display" style={{ fontSize: 22, color: theme.text, fontStyle: "italic", marginBottom: 6 }}>{card.pinyin}</div>
-              <div style={{ fontSize: 17, color: theme.text, lineHeight: 1.45, marginBottom: card.exampleHanzi ? 20 : 0 }}>{card.meaning}</div>
+              <div style={{ fontSize: 17, color: theme.text, lineHeight: 1.45, marginBottom: exampleFor(card) ? 20 : 0 }}>{card.meaning}</div>
               <ExampleBlock theme={theme} card={card} />
             </div>
           </div>
@@ -516,10 +532,10 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
             </div>
             <div className="display" style={{ fontSize: 20, color: theme.text, fontStyle: "italic", marginBottom: 4 }}>{card.pinyin}</div>
             <div style={{ fontSize: 16, color: theme.text }}>{card.meaning}</div>
-            {card.exampleHanzi && <>
-              <div className="hanzi" style={{ fontSize: 17, color: theme.textMute, lineHeight: 1.6, marginTop: 14 }}>{card.exampleHanzi}</div>
-              {card.exampleEnglish && <div style={{ fontSize: 13, color: theme.textMute, marginTop: 4 }}>{card.exampleEnglish}</div>}
-            </>}
+            {(() => { const ex = exampleFor(card); return ex && <>
+              <div className="hanzi" style={{ fontSize: 17, color: theme.textMute, lineHeight: 1.6, marginTop: 14 }}>{ex.hanzi}</div>
+              {ex.english && <div style={{ fontSize: 13, color: theme.textMute, marginTop: 4 }}>{ex.english}</div>}
+            </>; })()}
           </div>
         </div>
       </div>
