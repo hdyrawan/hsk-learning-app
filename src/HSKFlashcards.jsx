@@ -215,6 +215,76 @@ function ExampleBlock({ theme, card }) {
 }
 
 /* ================================================================== */
+/*  PART-OF-SPEECH HELPER + RELATED WORDS                              */
+/*  Users who don't know grammar jargon see a plain-language POS        */
+/*  explanation, and a hard lone hanzi is shown inside real words so    */
+/*  it isn't learned in isolation.                                     */
+/* ================================================================== */
+const FRIENDLY_POS = {
+  "noun":          { cn: "名词", tip: "a person, place, or thing — e.g. water, book, teacher" },
+  "verb":          { cn: "动词", tip: "an action or state — e.g. eat, go, be" },
+  "adjective":     { cn: "形容词", tip: "describes what something is like — e.g. big, happy, red" },
+  "adverb":        { cn: "副词", tip: "how/when/where an action happens — e.g. quickly, often" },
+  "measure word":  { cn: "量词", tip: "a counter used with numbers — 一位老师, 三本书" },
+  "particle":      { cn: "助词", tip: "a grammar helper word — e.g. 的, 了, 吗" },
+  "conjunction":   { cn: "连词", tip: "joins words or clauses — e.g. and, but, because" },
+  "preposition":   { cn: "介词", tip: "shows place/time/relation — e.g. in, on, at, from" },
+  "pronoun":       { cn: "代词", tip: "stands for a name — e.g. he, she, it, this" },
+  "numeral":       { cn: "数词", tip: "a number word — e.g. one, two, three" },
+  "time word":     { cn: "时间词", tip: "a time word — e.g. today, now, morning" },
+  "interjection":  { cn: "感叹词", tip: "an exclamation — e.g. wow!, oh!" },
+  "idiom":         { cn: "成语", tip: "a fixed saying, usually 4 characters" },
+  "onomatopoeia":  { cn: "拟声词", tip: "a sound word — e.g. 'bang', 'miaow'" },
+  "abbreviation":  { cn: "缩写", tip: "a shortened form" },
+  "symbol":        { cn: "符号", tip: "a symbol" },
+  "other":         { cn: "其他", tip: "a general word class" },
+};
+function posHelper(pos) {
+  return FRIENDLY_POS[pos] || { cn: "词类", tip: "a word-class label — see it used in the example below" };
+}
+
+// Words in the active deck that share a character with this card's hanzi,
+// so a hard lone character is seen inside real, usable words.
+function RelatedWordsPanel({ theme, card, deck }) {
+  const words = useMemo(() => {
+    const chars = [...new Set(card.hanzi.split(""))].filter(c => c.trim());
+    if (chars.length === 0) return [];
+    const seen = new Set();
+    const uniq = [];
+    for (const w of deck) {
+      if (w.id === card.id || w.hanzi === card.hanzi) continue;
+      if (!chars.some(ch => w.hanzi.includes(ch))) continue;
+      const key = w.hanzi + "|" + w.pinyin;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      uniq.push(w);
+    }
+    return uniq
+      .sort((a, b) => a.hanzi.length - b.hanzi.length || a.hanzi.localeCompare(b.hanzi))
+      .slice(0, 5);
+  }, [deck, card]);
+  if (words.length === 0) return null;
+  const label = card.hanzi.length === 1 ? `Words with ${card.hanzi}` : `Words using ${card.hanzi}`;
+  return (
+    <div style={{ paddingTop: 14, borderTop: `1px solid ${theme.border}`, marginTop: 14 }}>
+      <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: theme.textMute, marginBottom: 8 }}>{label}</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {words.map(w => (
+          <button key={w.id} onClick={(e) => { e.stopPropagation(); speak(w.hanzi); }}
+            style={{ display: "flex", alignItems: "center", gap: 10, background: theme.surfaceAlt, border: `1px solid ${theme.border}`, borderRadius: 8, padding: "7px 10px", cursor: "pointer", textAlign: "left" }}>
+            <span className="hanzi" style={{ fontSize: 18, color: theme.text, minWidth: 26 }}>{w.hanzi}</span>
+            <span className="display" style={{ fontSize: 12, color: theme.textMute, fontStyle: "italic", minWidth: 70, whiteSpace: "nowrap" }}>{w.pinyin}</span>
+            <span style={{ fontSize: 12, color: theme.textMute, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+              {w.meaning.split(";")[0].trim()}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================== */
 /*  DECK BAR — choose which HSK levels are active.                     */
 /*  Two rows: Classic HSK 2.0 (1–6) and New HSK 3.0 (N1–N7).          */
 /* ================================================================== */
@@ -352,8 +422,12 @@ function StudyView({ deck, progress, onAnswer, reverseMode, theme }) {
                 <span className="display" style={{ fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase", color: theme.accent, fontStyle: "italic", whiteSpace: "nowrap" }}>{card.partOfSpeech}</span>
               </div>
               <div className="display" style={{ fontSize: 22, color: theme.text, fontStyle: "italic", marginBottom: 6 }}>{card.pinyin}</div>
+              <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 10, lineHeight: 1.5 }}>
+                {card.partOfSpeech} · <span className="hanzi">{posHelper(card.partOfSpeech).cn}</span> — {posHelper(card.partOfSpeech).tip}
+              </div>
               <div style={{ fontSize: 17, color: theme.text, lineHeight: 1.45, marginBottom: exampleFor(card) ? 20 : 0 }}>{card.meaning}</div>
               <ExampleBlock theme={theme} card={card} />
+              <RelatedWordsPanel theme={theme} card={card} deck={deck} />
             </div>
           </div>
         </div>
@@ -537,12 +611,16 @@ function ReviewView({ deck, progress, onAnswer, reverseMode, theme }) {
               <PlayButton theme={theme} onClick={(e) => { e.stopPropagation(); speak(card.hanzi); }} />
             </div>
             <div className="display" style={{ fontSize: 20, color: theme.text, fontStyle: "italic", marginBottom: 4 }}>{card.pinyin}</div>
+            <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 8, lineHeight: 1.5 }}>
+              {card.partOfSpeech} · <span className="hanzi">{posHelper(card.partOfSpeech).cn}</span> — {posHelper(card.partOfSpeech).tip}
+            </div>
             <div style={{ fontSize: 16, color: theme.text }}>{card.meaning}</div>
             {(() => { const ex = exampleFor(card); return ex && <>
               <div className="hanzi" style={{ fontSize: 17, color: theme.textMute, lineHeight: 1.6, marginTop: 14 }}>{ex.hanzi}</div>
               {ex.pinyin && <div className="display" style={{ fontSize: 13, color: theme.textMute, fontStyle: "italic", marginTop: 3 }}>{ex.pinyin}</div>}
               {ex.english && <div style={{ fontSize: 13, color: theme.textMute, marginTop: 4 }}>{ex.english}</div>}
             </>; })()}
+            <RelatedWordsPanel theme={theme} card={card} deck={deck} />
           </div>
         </div>
       </div>
