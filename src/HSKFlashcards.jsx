@@ -390,7 +390,7 @@ function Meaning({ theme, meaning }) {
     <div>
       <div style={{ fontSize: 17, color: theme.text, lineHeight: 1.45, display: "flex", alignItems: "center", flexWrap: "wrap", columnGap: 8 }}>
         <span>{parts[0]}</span>
-        <button onClick={() => setMore(m => !m)}
+        <button onClick={(e) => { e.stopPropagation(); setMore(m => !m); }}
           style={{ background: "transparent", border: "none", color: theme.accent, fontSize: 12, cursor: "pointer", padding: 0 }}>
           {more ? "less" : `+${parts.length - 1} more`}
         </button>
