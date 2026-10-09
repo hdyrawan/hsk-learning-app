@@ -105,6 +105,19 @@ function usePersistedState(key, defaultValue) {
 /* ================================================================== */
 /*  HELPERS                                                            */
 /* ================================================================== */
+/* Custom words need an id that can never collide across devices.
+   Deck words carry numeric ids (1..15960), so custom ids are namespaced and
+   globally unique. Never use a sequential counter: two devices would both
+   mint "custom-4" for different words and sync would corrupt the deck. */
+function newCustomId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `custom-${crypto.randomUUID()}`;
+  }
+  return `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+const LEGACY_CUSTOM_ID = /^custom-\d+$/;
+
 function shuffleArray(arr) {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -836,9 +849,7 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
 
   const addWord = () => {
     if (!form.hanzi.trim() || !form.pinyin.trim() || !form.meaning.trim()) { flash("Hanzi, pinyin and meaning are required."); return; }
-    const nums = customWords.map(w => Number(String(w.id).replace("custom-", ""))).filter(n => !isNaN(n));
-    const maxId = nums.reduce((m, n) => Math.max(m, n), 0);
-    const word = { ...form, id: `custom-${maxId + 1}`, source: "custom", level: "custom" };
+    const word = { ...form, id: newCustomId(), source: "custom", level: "custom" };
     Object.keys(word).forEach(k => { if (typeof word[k] === "string") word[k] = word[k].trim(); });
     if (!word.exampleHanzi) { delete word.exampleHanzi; delete word.examplePinyin; delete word.exampleEnglish; }
     setCustomWords([...customWords, word]);
@@ -1364,6 +1375,23 @@ export default function App() {
   const [todayCount, setTodayCount]   = usePersistedState("hsk-today", { date: todayStr(), count: 0 });
   const [goal, setGoal]               = usePersistedState("hsk-goal", 20);
   const [bestScores, setBestScores]   = usePersistedState("hsk-best-scores", {});
+
+  // One-time migration: custom words created before sync existed were given
+  // sequential ids ("custom-3"), which collide across devices. Rewrite them to
+  // UUIDs and carry their progress records along, so sync starts clean.
+  useEffect(() => {
+    const legacy = customWords.filter(w => LEGACY_CUSTOM_ID.test(String(w.id)));
+    if (legacy.length === 0) return;
+    const remap = new Map(legacy.map(w => [w.id, newCustomId()]));
+    setCustomWords(prev => prev.map(w => (remap.has(w.id) ? { ...w, id: remap.get(w.id) } : w)));
+    setProgress(prev => {
+      const next = { ...prev };
+      remap.forEach((newId, oldId) => {
+        if (next[oldId] !== undefined) { next[newId] = next[oldId]; delete next[oldId]; }
+      });
+      return next;
+    });
+  }, [customWords, setCustomWords, setProgress]);
 
   // Reset today's counter when the calendar day rolls over.
   useEffect(() => {
