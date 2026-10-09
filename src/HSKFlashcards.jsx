@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { HSK_WORDS, HSK_CLASSIC_LEVELS, HSK_NEW_LEVELS } from "./hskWords";
 import { HSK_EXAMPLES } from "./hskExamples";
+import { useSync } from "./useSync";
 
 /* ================================================================== */
 /*  Supports both classic HSK 2.0 (levels 1–6, ~5,000 words) and      */
@@ -833,7 +834,7 @@ function LibraryView({ deck, progress, theme }) {
 /* ================================================================== */
 /*  SETTINGS VIEW                                                      */
 /* ================================================================== */
-function SettingsView({ customWords, setCustomWords, progress, setProgress, darkMode, setDarkMode, streak, setStreak, todayCount, goal, setGoal, bestScores, setBestScores, theme }) {
+function SettingsView({ customWords, setCustomWords, progress, setProgress, darkMode, setDarkMode, deletedCustomWords, setDeletedCustomWords, sync, streak, setStreak, todayCount, goal, setGoal, bestScores, setBestScores, theme }) {
   const blankForm = { hanzi: "", pinyin: "", meaning: "", partOfSpeech: "noun", exampleHanzi: "", examplePinyin: "", exampleEnglish: "" };
   const [form, setForm] = useState(blankForm);
   const [notice, setNotice] = useState("");
@@ -857,6 +858,10 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
     flash(`Added ${word.hanzi}.`);
   };
   const removeWord = (id) => {
+    const gone = customWords.find(w => w.id === id);
+    // Keep a tombstone so the deletion reaches other devices. The whole word is
+    // kept because the server row needs its required columns to be marked gone.
+    if (gone) setDeletedCustomWords(prev => [...prev.filter(x => x.id !== id), { ...gone, updatedAt: Date.now() }]);
     setCustomWords(customWords.filter(w => w.id !== id));
     setProgress(p => { const c = { ...p }; delete c[id]; return c; });
   };
@@ -907,6 +912,15 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
     if (window.confirm("Reset all learning progress? Custom words are kept, but every card returns to New.")) { setProgress({}); flash("Progress reset."); }
   };
 
+  const [email, setEmail] = useState("");
+  const [syncMessage, setSyncMessage] = useState("");
+  const sendLink = async () => {
+    setSyncMessage("");
+    if (!email.trim()) { setSyncMessage("Enter your email address first."); return; }
+    const err = await sync.signIn(email.trim());
+    setSyncMessage(err || "Check your inbox for the sign-in link.");
+  };
+
   const input = { width: "100%", padding: "10px 12px", background: theme.bg, border: `1px solid ${theme.border}`, borderRadius: 8, color: theme.text, fontSize: 14, boxSizing: "border-box", outline: "none" };
   const section = { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 20, marginBottom: 16 };
   const label = { fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, marginBottom: 12, display: "block" };
@@ -914,6 +928,52 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
   return (
     <div className="fade-in">
       {notice && <div style={{ position: "sticky", top: 8, zIndex: 5, background: theme.accent, color: "#fff", padding: "10px 16px", borderRadius: 10, fontSize: 13, marginBottom: 14, textAlign: "center" }}>{notice}</div>}
+
+      <div style={section}>
+        <span style={label}>Account &amp; sync</span>
+        {!sync.available && (
+          <div style={{ fontSize: 13, color: theme.textMute }}>
+            Sync is not configured in this build. Everything stays on this device.
+          </div>
+        )}
+        {sync.available && !sync.session && (
+          <div>
+            <div style={{ fontSize: 13, color: theme.textMute, marginBottom: 10 }}>
+              Optional. Sign in to carry your progress and custom words between devices.
+              Everything still works with no account.
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input
+                style={{ ...input, flex: "1 1 200px" }}
+                type="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+              />
+              <Button theme={theme} variant="primary" onClick={sendLink} style={{ padding: "10px 16px" }}>
+                Email me a sign-in link
+              </Button>
+            </div>
+            {syncMessage && <div style={{ fontSize: 12, color: theme.textMute, marginTop: 10 }}>{syncMessage}</div>}
+          </div>
+        )}
+        {sync.available && sync.session && (
+          <div>
+            <div style={{ fontSize: 14, color: theme.text, marginBottom: 4 }}>{sync.email}</div>
+            <div style={{ fontSize: 12, color: theme.textMute, marginBottom: 12 }}>
+              {sync.status === "syncing" ? "Syncing…"
+                : sync.status === "error" ? `Sync problem: ${sync.lastError}`
+                : sync.lastSyncAt ? `Last synced ${new Date(sync.lastSyncAt).toLocaleTimeString()}`
+                : "Not synced yet"}
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Button theme={theme} variant="ghost" onClick={() => sync.syncNow()} style={{ padding: "8px 14px", fontSize: 13 }}>Sync now</Button>
+              <Button theme={theme} variant="ghost" onClick={() => sync.signOut()} style={{ padding: "8px 14px", fontSize: 13 }}>Sign out</Button>
+            </div>
+          </div>
+        )}
+      </div>
 
       <div style={section}>
         <span style={label}>Appearance</span>
@@ -1375,22 +1435,30 @@ export default function App() {
   const [todayCount, setTodayCount]   = usePersistedState("hsk-today", { date: todayStr(), count: 0 });
   const [goal, setGoal]               = usePersistedState("hsk-goal", 20);
   const [bestScores, setBestScores]   = usePersistedState("hsk-best-scores", {});
+  // Tombstones for deleted custom words, so a deletion reaches other devices
+  // instead of being resurrected by a stale copy.
+  const [deletedCustomWords, setDeletedCustomWords] = usePersistedState("hsk-custom-deleted", []);
+  const [migrationDone, setMigrationDone] = useState(false);
 
   // One-time migration: custom words created before sync existed were given
   // sequential ids ("custom-3"), which collide across devices. Rewrite them to
   // UUIDs and carry their progress records along, so sync starts clean.
   useEffect(() => {
     const legacy = customWords.filter(w => LEGACY_CUSTOM_ID.test(String(w.id)));
-    if (legacy.length === 0) return;
-    const remap = new Map(legacy.map(w => [w.id, newCustomId()]));
-    setCustomWords(prev => prev.map(w => (remap.has(w.id) ? { ...w, id: remap.get(w.id) } : w)));
-    setProgress(prev => {
-      const next = { ...prev };
-      remap.forEach((newId, oldId) => {
-        if (next[oldId] !== undefined) { next[newId] = next[oldId]; delete next[oldId]; }
+    if (legacy.length > 0) {
+      const remap = new Map(legacy.map(w => [w.id, newCustomId()]));
+      setCustomWords(prev => prev.map(w => (remap.has(w.id) ? { ...w, id: remap.get(w.id) } : w)));
+      setProgress(prev => {
+        const next = { ...prev };
+        remap.forEach((newId, oldId) => {
+          if (next[oldId] !== undefined) { next[newId] = next[oldId]; delete next[oldId]; }
+        });
+        return next;
       });
-      return next;
-    });
+    }
+    // Sync must not begin until legacy ids are rewritten, or it would upload
+    // ids that are about to change underneath it.
+    setMigrationDone(true);
   }, [customWords, setCustomWords, setProgress]);
 
   // Reset today's counter when the calendar day rolls over.
@@ -1416,6 +1484,17 @@ export default function App() {
     const hsk = HSK_WORDS.filter(w => levelSet.has(w.level)).map(w => ({ ...w, source: "hsk" }));
     return [...hsk, ...customWords];
   }, [levels, customWords]);
+
+  const sync = useSync({
+    ready: migrationDone,
+    progress, setProgress,
+    customWords, setCustomWords,
+    deletedCustomWords, setDeletedCustomWords,
+    darkMode, setDarkMode,
+    reverseMode, setReverseMode,
+    levels, setLevels,
+    goal, setGoal,
+  });
 
   const onAnswer = useCallback((cardId, mode) => {
     trackActivity();
@@ -1512,7 +1591,7 @@ export default function App() {
         {view === "review"   && <ReviewView  deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
         {view === "exam"     && <ExamView    deck={deck} theme={theme} bestScores={bestScores} onFinish={handleExamFinish} />}
         {view === "library"  && <LibraryView deck={deck} progress={progress} theme={theme} />}
-        {view === "settings" && <SettingsView customWords={customWords} setCustomWords={setCustomWords} progress={progress} setProgress={setProgress} darkMode={darkMode} setDarkMode={setDarkMode}
+        {view === "settings" && <SettingsView customWords={customWords} setCustomWords={setCustomWords} progress={progress} setProgress={setProgress} darkMode={darkMode} setDarkMode={setDarkMode} deletedCustomWords={deletedCustomWords} setDeletedCustomWords={setDeletedCustomWords} sync={sync}
             streak={streak} setStreak={setStreak} todayCount={todayCount} goal={goal} setGoal={setGoal} bestScores={bestScores} setBestScores={setBestScores} theme={theme} />}
       </main>
 
