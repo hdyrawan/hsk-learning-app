@@ -11,6 +11,7 @@ import {
   mergeProgressMaps,
   mergeCustomWords,
   mergeSettings,
+  progressDiffers,
   progressRecordToRow,
   rowToProgressRecord,
   localWordToRow,
@@ -138,17 +139,65 @@ console.log("\ncustom word merge");
   check("newer remote word wins", merged[0].hanzi === "甲-newer");
 }
 
+console.log("\nprogress reset and exclusions");
+
+{
+  const remoteRow = { card_id: 1, level: 3, ease: 2.5, interval_days: 9, reps: 4, lapses: 0,
+    next_review: 9, last_reviewed: 500, correct_count: 9, incorrect_count: 0 };
+  const { merged, pushIds } = mergeProgressMaps({ 2: rec(400) }, [remoteRow], { resetAt: 600 });
+  check("reset discards older remote and local records",
+    Object.keys(merged).length === 0 && pushIds.length === 0);
+}
+
+{
+  const { merged, pushIds } = mergeProgressMaps({ 2: rec(900) }, [], { resetAt: 600 });
+  check("study after a reset is kept and uploaded", merged["2"] && pushIds.includes("2"));
+}
+
+{
+  const { merged } = mergeProgressMaps(
+    { "custom-x": rec(100) },
+    [{ card_id: "custom-x", level: 1, ease: 2.5, interval_days: 1, reps: 1, lapses: 0,
+       next_review: 1, last_reviewed: 200, correct_count: 1, incorrect_count: 0 }],
+    { excludeIds: ["custom-x"] });
+  check("excluded (deleted word) progress does not come back", !("custom-x" in merged));
+}
+
+console.log("\nchange detection");
+
+{
+  check("identical records do not differ", !progressDiffers(rec(100), rec(100)));
+  check("level change without lastReviewed is detected",
+    progressDiffers(rec(100), { ...rec(100), level: 3 }));
+  check("missing record counts as changed", progressDiffers(undefined, rec(100)));
+}
+
 console.log("\nsettings merge");
 
 {
-  const local = { darkMode: true, reverseMode: false, levels: [3], goal: 20 };
-  const remote = { dark_mode: false, reverse_mode: true, levels: ["N1"], goal: 50 };
-  check("fresh device adopts the account's settings",
-    mergeSettings(local, remote, true).settings.goal === 50);
-  check("used device keeps its own settings",
-    mergeSettings(local, remote, false).settings.goal === 20);
-  check("no remote row means push",
-    mergeSettings(local, null, true).push === true);
+  const local = { darkMode: true, reverseMode: false, levels: [3], goal: 20, streak: { lastDate: "d", count: 2 }, bestScores: {} };
+  const remote = { dark_mode: false, reverse_mode: true, levels: ["N1"], goal: 50,
+    streak: { lastDate: "e", count: 9 }, best_scores: { best: { score: 5 } },
+    client_updated_at: new Date(1000).toISOString() };
+
+  let m = mergeSettings(local, 0, remote);
+  check("never-changed device adopts the account's settings", m.adopted && m.settings.goal === 50 && !m.push);
+  check("adopted settings carry streak and best scores", m.settings.streak.count === 9 && m.settings.bestScores.best.score === 5);
+
+  m = mergeSettings(local, 2000, remote);
+  check("device with newer change keeps and pushes its settings", !m.adopted && m.settings.goal === 20 && m.push);
+
+  m = mergeSettings(local, 500, remote);
+  check("stale device cannot overwrite newer account settings", m.adopted && m.settings.goal === 50 && !m.push);
+
+  m = mergeSettings(local, 1000, remote);
+  check("equal timestamps push nothing", !m.adopted && !m.push);
+
+  check("no remote row means push", mergeSettings(local, 0, null).push === true);
+
+  const old = { dark_mode: true, reverse_mode: false, levels: [3], goal: 20, client_updated_at: new Date(1000).toISOString() };
+  m = mergeSettings(local, 0, old);
+  check("old row without streak keeps local streak", m.settings.streak.count === 2);
 }
 
 console.log("\nchunking");

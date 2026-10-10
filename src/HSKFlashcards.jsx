@@ -850,7 +850,7 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
 
   const addWord = () => {
     if (!form.hanzi.trim() || !form.pinyin.trim() || !form.meaning.trim()) { flash("Hanzi, pinyin and meaning are required."); return; }
-    const word = { ...form, id: newCustomId(), source: "custom", level: "custom" };
+    const word = { ...form, id: newCustomId(), source: "custom", level: "custom", updatedAt: Date.now() };
     Object.keys(word).forEach(k => { if (typeof word[k] === "string") word[k] = word[k].trim(); });
     if (!word.exampleHanzi) { delete word.exampleHanzi; delete word.examplePinyin; delete word.exampleEnglish; }
     setCustomWords([...customWords, word]);
@@ -909,7 +909,7 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
     e.target.value = "";
   };
   const resetProgress = () => {
-    if (window.confirm("Reset all learning progress? Custom words are kept, but every card returns to New.")) { setProgress({}); flash("Progress reset."); }
+    if (window.confirm("Reset all learning progress? Custom words are kept, but every card returns to New.")) { setProgress({}); sync.resetProgress(); flash("Progress reset."); }
   };
 
   const [email, setEmail] = useState("");
@@ -1494,6 +1494,8 @@ export default function App() {
     reverseMode, setReverseMode,
     levels, setLevels,
     goal, setGoal,
+    streak, setStreak,
+    bestScores, setBestScores,
   });
 
   const onAnswer = useCallback((cardId, mode) => {

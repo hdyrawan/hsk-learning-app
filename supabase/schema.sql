@@ -117,3 +117,82 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- ---------------------------------------------------------------------------
+-- Additions (safe to re-run; apply to an existing project too)
+-- ---------------------------------------------------------------------------
+
+-- A "reset all progress" is a timestamp: cards last reviewed at or before it
+-- are discarded on every device. Streak and best scores ride along with the
+-- settings row.
+alter table public.user_settings add column if not exists progress_reset_at bigint not null default 0;
+alter table public.user_settings add column if not exists streak jsonb;
+alter table public.user_settings add column if not exists best_scores jsonb;
+
+-- A stale device must never move the reset marker backwards.
+create or replace function public.keep_latest_reset()
+returns trigger
+language plpgsql
+as $$
+begin
+  if tg_op = 'UPDATE' then
+    new.progress_reset_at = greatest(new.progress_reset_at, old.progress_reset_at);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists user_settings_keep_reset on public.user_settings;
+create trigger user_settings_keep_reset
+  before update on public.user_settings
+  for each row execute function public.keep_latest_reset();
+
+-- Sanity limits so one account cannot fill the database. NOT VALID checks new
+-- and changed rows without failing on anything already stored.
+alter table public.card_progress drop constraint if exists card_progress_limits;
+alter table public.card_progress add constraint card_progress_limits check (
+  card_id ~ '^([0-9]{1,6}|custom-[0-9a-zA-Z-]{1,60})$'
+  and level between 0 and 3
+  and ease between 0 and 10
+  and interval_days between 0 and 100000
+  and reps >= 0 and lapses >= 0 and correct_count >= 0 and incorrect_count >= 0
+) not valid;
+
+alter table public.custom_words drop constraint if exists custom_words_limits;
+alter table public.custom_words add constraint custom_words_limits check (
+  char_length(id) <= 64
+  and char_length(hanzi) <= 64
+  and char_length(pinyin) <= 128
+  and char_length(meaning) <= 500
+  and char_length(coalesce(part_of_speech, '')) <= 32
+  and char_length(coalesce(example_hanzi, '')) <= 500
+  and char_length(coalesce(example_pinyin, '')) <= 500
+  and char_length(coalesce(example_english, '')) <= 500
+) not valid;
+
+alter table public.user_settings drop constraint if exists user_settings_limits;
+alter table public.user_settings add constraint user_settings_limits check (
+  goal between 1 and 1000
+  and jsonb_typeof(levels) = 'array'
+  and jsonb_array_length(levels) <= 20
+  and pg_column_size(coalesce(streak, '{}'::jsonb)) <= 1024
+  and pg_column_size(coalesce(best_scores, '{}'::jsonb)) <= 4096
+) not valid;
+
+-- At most 5,000 custom words per account.
+create or replace function public.limit_custom_words()
+returns trigger
+language plpgsql
+as $$
+begin
+  if (select count(*) from public.custom_words where user_id = new.user_id) >= 5000 then
+    raise exception 'custom word limit reached';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists custom_words_limit on public.custom_words;
+create trigger custom_words_limit
+  before insert on public.custom_words
+  for each row execute function public.limit_custom_words();
