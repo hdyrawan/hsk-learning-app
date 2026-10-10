@@ -2,6 +2,10 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { HSK_WORDS, HSK_CLASSIC_LEVELS, HSK_NEW_LEVELS } from "./hskWords";
 import { HSK_EXAMPLES } from "./hskExamples";
 import { useSync } from "./useSync";
+import {
+  emptyGame, mergeGame, recordActivity, answerEvent, examEvent, lifetimeStats, dayTotals,
+  baselineFromProgress, levelInfo, buildAchievements, newlyUnlocked, advanceStreak, liveStreak,
+} from "./gamification";
 
 /* ================================================================== */
 /*  Supports both classic HSK 2.0 (levels 1–6, ~5,000 words) and      */
@@ -26,9 +30,9 @@ function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
-function yesterdayStr() {
+function dayStr(offset = 0) {
   const d = new Date();
-  d.setDate(d.getDate() - 1);
+  d.setDate(d.getDate() + offset);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
@@ -834,7 +838,7 @@ function LibraryView({ deck, progress, theme }) {
 /* ================================================================== */
 /*  SETTINGS VIEW                                                      */
 /* ================================================================== */
-function SettingsView({ customWords, setCustomWords, progress, setProgress, darkMode, setDarkMode, deletedCustomWords, setDeletedCustomWords, sync, streak, setStreak, todayCount, goal, setGoal, bestScores, setBestScores, theme }) {
+function SettingsView({ customWords, setCustomWords, progress, setProgress, darkMode, setDarkMode, deletedCustomWords, setDeletedCustomWords, sync, streak, setStreak, todayCount, goal, setGoal, bestScores, setBestScores, game, setGame, theme }) {
   const blankForm = { hanzi: "", pinyin: "", meaning: "", partOfSpeech: "noun", exampleHanzi: "", examplePinyin: "", exampleEnglish: "" };
   const [form, setForm] = useState(blankForm);
   const [notice, setNotice] = useState("");
@@ -866,7 +870,7 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
     setProgress(p => { const c = { ...p }; delete c[id]; return c; });
   };
   const exportData = () => {
-    const payload = { version: 4, exportedAt: new Date().toISOString(), progress, customWords, streak, todayCount, goal, bestScores, settings: { darkMode } };
+    const payload = { version: 5, exportedAt: new Date().toISOString(), progress, customWords, streak, todayCount, goal, bestScores, game, settings: { darkMode } };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -902,6 +906,7 @@ function SettingsView({ customWords, setCustomWords, progress, setProgress, dark
         if (data.todayCount && typeof data.todayCount.count === "number") setTodayCount(data.todayCount);
         if (typeof data.goal === "number") setGoal(data.goal);
         if (data.bestScores && typeof data.bestScores === "object") setBestScores(data.bestScores);
+        if (data.game && typeof data.game === "object") setGame(g => mergeGame(g, data.game));
         flash("Imported and merged your data.");
       } catch { flash("That file could not be read as valid JSON."); }
     };
@@ -1419,7 +1424,154 @@ function ExamView({ deck, theme, bestScores, onFinish }) {
 /* ================================================================== */
 /*  MAIN APP                                                           */
 /* ================================================================== */
-const TABS = [["study", "Study"], ["quiz", "Quiz"], ["review", "Review"], ["exam", "Exam"], ["library", "Library"], ["settings", "Settings"]];
+const TABS = [["study", "Study"], ["quiz", "Quiz"], ["review", "Review"], ["exam", "Exam"], ["library", "Library"], ["progress", "Progress"], ["settings", "Settings"]];
+
+/* Gamification constants. Achievements are pure functions of stats (see
+   gamification.js); the log of XP and unlock dates is what gets stored. */
+const ALL_LEVELS = [...HSK_CLASSIC_LEVELS, ...HSK_NEW_LEVELS];
+const ACHIEVEMENTS = buildAchievements(ALL_LEVELS);
+const LEVEL_IDS = (() => {
+  const m = {};
+  HSK_WORDS.forEach(w => { (m[w.level] = m[w.level] || []).push(w.id); });
+  return m;
+})();
+
+// Each browser counts its own study; totals add up across devices when synced.
+function getDeviceId() {
+  try {
+    let id = localStorage.getItem("hsk-device-id");
+    if (!id) {
+      id = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 10);
+      localStorage.setItem("hsk-device-id", id);
+    }
+    return id;
+  } catch { return "local"; }
+}
+const levelLabel = (k) => (typeof k === "number" ? `HSK ${k}` : k);
+
+/* ================================================================== */
+/*  PROGRESS VIEW (XP, streak, levels, activity, achievements)         */
+/* ================================================================== */
+function Ring({ theme, pct, label, sub, size = 64 }) {
+  const r = (size - 8) / 2, c = 2 * Math.PI * r;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 64 }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`${label}: ${Math.round(pct * 100)}% mastered`}>
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={theme.border} strokeWidth="5" />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={pct >= 0.9 ? theme.good : theme.accent} strokeWidth="5" strokeLinecap="round"
+          strokeDasharray={c} strokeDashoffset={c * (1 - Math.min(1, pct))} transform={`rotate(-90 ${size / 2} ${size / 2})`} />
+        <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" fontSize="13" fontWeight="600" fill={theme.text}>{Math.round(pct * 100)}%</text>
+      </svg>
+      <div style={{ fontSize: 12, color: theme.text, fontWeight: 500 }}>{label}</div>
+      <div style={{ fontSize: 10, color: theme.textMute, fontVariantNumeric: "tabular-nums" }}>{sub}</div>
+    </div>
+  );
+}
+
+function ProgressView({ theme, game, gameStats, xpInfo, streak, displayStreak, goal, todayCount }) {
+  const section = { background: theme.surface, border: `1px solid ${theme.border}`, borderRadius: 12, padding: 20, marginBottom: 16 };
+  const label = { fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: theme.textMute, marginBottom: 12, display: "block" };
+  const unlocked = game.achievements || {};
+  const unlockedCount = ACHIEVEMENTS.filter(a => a.id in unlocked).length;
+  const groups = [...new Set(ACHIEVEMENTS.map(a => a.group))];
+
+  // 12 weeks of activity, aligned so each column is one calendar week.
+  const heat = useMemo(() => {
+    const dow = new Date().getDay();
+    const cells = [];
+    for (let i = 0; i < 84; i++) {
+      const offset = i - (77 + dow);
+      const date = dayStr(offset);
+      cells.push({ date, future: offset > 0, reviews: offset > 0 ? 0 : dayTotals(game, date).r });
+    }
+    return cells;
+  }, [game]);
+  const shade = (n) => (n === 0 ? 0 : n < 10 ? 0.3 : n < 25 ? 0.5 : n < 50 ? 0.75 : 1);
+
+  const levelRing = (k) => {
+    const l = gameStats.levels[k] || { mastered: 0, total: 0 };
+    return <Ring key={k} theme={theme} pct={l.total ? l.mastered / l.total : 0} label={levelLabel(k)} sub={`${l.mastered}/${l.total}`} />;
+  };
+
+  return (
+    <div className="fade-in">
+      <div style={section}>
+        <span style={label}>Level</span>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10 }}>
+          <span className="display" style={{ fontSize: 34, fontWeight: 600 }}>Lv {xpInfo.level}</span>
+          <span style={{ fontSize: 13, color: theme.textMute, fontVariantNumeric: "tabular-nums" }}>{xpInfo.xp.toLocaleString()} XP</span>
+        </div>
+        <div style={{ height: 8, background: theme.border, borderRadius: 999, overflow: "hidden" }} role="progressbar" aria-valuemin={0} aria-valuemax={xpInfo.span} aria-valuenow={xpInfo.into}>
+          <div style={{ height: "100%", width: `${Math.round((xpInfo.into / xpInfo.span) * 100)}%`, background: theme.accent, transition: "width 0.5s" }} />
+        </div>
+        <div style={{ fontSize: 12, color: theme.textMute, marginTop: 6 }}>{xpInfo.span - xpInfo.into} XP to level {xpInfo.level + 1}</div>
+      </div>
+
+      <div style={{ ...section, display: "flex", gap: 24, flexWrap: "wrap" }}>
+        <div>
+          <span style={label}>Streak</span>
+          <div style={{ fontSize: 22, fontWeight: 600 }}>🔥 {displayStreak} {displayStreak === 1 ? "day" : "days"}</div>
+          <div style={{ fontSize: 12, color: theme.textMute, marginTop: 4 }}>
+            ❄️ {streak.freezes || 0} freeze{(streak.freezes || 0) === 1 ? "" : "s"} · earn one every 7 days
+          </div>
+        </div>
+        <div>
+          <span style={label}>Today</span>
+          <div style={{ fontSize: 22, fontWeight: 600 }}>{todayCount.count}<span style={{ fontSize: 14, color: theme.textMute }}> / {goal}</span></div>
+          <div style={{ fontSize: 12, color: theme.textMute, marginTop: 4 }}>{todayCount.count >= goal ? "Goal reached · +30 XP" : "Reach your goal for +30 XP"}</div>
+        </div>
+      </div>
+
+      <div style={section}>
+        <span style={label}>Mastered by level</span>
+        <div style={{ fontSize: 11, color: theme.textMute, marginBottom: 8 }}>Classic HSK 2.0</div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>{HSK_CLASSIC_LEVELS.map(levelRing)}</div>
+        <div style={{ fontSize: 11, color: theme.textMute, marginBottom: 8 }}>New HSK 3.0</div>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>{HSK_NEW_LEVELS.map(levelRing)}</div>
+      </div>
+
+      <div style={section}>
+        <span style={label}>Last 12 weeks</span>
+        <div style={{ display: "grid", gridTemplateRows: "repeat(7, 1fr)", gridAutoFlow: "column", gap: 3 }} role="img" aria-label="Daily activity for the last 12 weeks">
+          {heat.map(c => (
+            <div key={c.date} title={c.future ? "" : `${c.date}: ${c.reviews} reviews`}
+              style={{ aspectRatio: "1", borderRadius: 3, background: c.future ? "transparent" : c.reviews ? theme.good : theme.border, opacity: c.future ? 0 : c.reviews ? 0.25 + shade(c.reviews) * 0.75 : 0.6 }} />
+          ))}
+        </div>
+        <div style={{ fontSize: 12, color: theme.textMute, marginTop: 10 }}>
+          {gameStats.reviews.toLocaleString()} cards answered · {gameStats.mastered.toLocaleString()} mastered
+        </div>
+      </div>
+
+      <div style={section}>
+        <span style={label}>Achievements · {unlockedCount}/{ACHIEVEMENTS.length}</span>
+        {groups.map(group => (
+          <div key={group} style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 11, color: theme.textMute, marginBottom: 8 }}>{group}</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: 8 }}>
+              {ACHIEVEMENTS.filter(a => a.group === group).map(a => {
+                const done = a.id in unlocked;
+                const [cur, target] = a.progress(gameStats);
+                return (
+                  <div key={a.id} title={a.desc} style={{ border: `1px solid ${done ? theme.good : theme.border}`, borderRadius: 10, padding: "10px 12px", opacity: done ? 1 : 0.65 }}>
+                    <div style={{ fontSize: 20, filter: done ? "none" : "grayscale(1)" }}>{a.icon}</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, marginTop: 2 }}>{a.name}</div>
+                    <div style={{ fontSize: 11, color: theme.textMute, lineHeight: 1.4 }}>{a.desc}</div>
+                    {done
+                      ? <div style={{ fontSize: 10, color: theme.good, marginTop: 4 }}>Unlocked {new Date(unlocked[a.id]).toLocaleDateString()}</div>
+                      : <div style={{ height: 3, background: theme.border, borderRadius: 999, marginTop: 6 }}>
+                          <div style={{ height: "100%", width: `${Math.round((cur / target) * 100)}%`, background: theme.accent, borderRadius: 999 }} />
+                        </div>}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function App() {
   const [progress, setProgress]       = usePersistedState("hsk-progress", {});
@@ -1435,6 +1587,9 @@ export default function App() {
   const [todayCount, setTodayCount]   = usePersistedState("hsk-today", { date: todayStr(), count: 0 });
   const [goal, setGoal]               = usePersistedState("hsk-goal", 20);
   const [bestScores, setBestScores]   = usePersistedState("hsk-best-scores", {});
+  const [game, setGame]               = usePersistedState("hsk-game", emptyGame());
+  const deviceId = useMemo(getDeviceId, []);
+  const [toasts, setToasts]           = useState([]);
   // Tombstones for deleted custom words, so a deletion reaches other devices
   // instead of being resurrected by a stale copy.
   const [deletedCustomWords, setDeletedCustomWords] = usePersistedState("hsk-custom-deleted", []);
@@ -1468,11 +1623,7 @@ export default function App() {
 
   const trackActivity = useCallback(() => {
     const today = todayStr();
-    setStreak(prev => {
-      let count = prev.count;
-      if (prev.lastDate !== today) count = (prev.lastDate === yesterdayStr()) ? prev.count + 1 : 1;
-      return { lastDate: today, count };
-    });
+    setStreak(prev => advanceStreak(prev, today, dayStr));
     setTodayCount(prev => ({ date: today, count: (prev.date === today ? prev.count : 0) + 1 }));
   }, [setStreak, setTodayCount]);
 
@@ -1496,16 +1647,29 @@ export default function App() {
     goal, setGoal,
     streak, setStreak,
     bestScores, setBestScores,
+    game, setGame,
   });
+
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
+  const goalRef = useRef(goal);
+  goalRef.current = goal;
+
+  const recordGame = useCallback((delta) => {
+    setGame(g => recordActivity(g, deviceId, todayStr(), delta, goalRef.current));
+  }, [setGame, deviceId]);
 
   const onAnswer = useCallback((cardId, mode) => {
     trackActivity();
-    setProgress(prev => ({ ...prev, [cardId]: applyAnswer(prev[cardId], mode) }));
-  }, [trackActivity, setProgress]);
+    const prev = progressRef.current[cardId];
+    recordGame(answerEvent(prev, applyAnswer(prev, mode), mode));
+    setProgress(p => ({ ...p, [cardId]: applyAnswer(p[cardId], mode) }));
+  }, [trackActivity, setProgress, recordGame]);
 
   const handleExamFinish = useCallback((grade) => {
     if (!grade) return;
     trackActivity();
+    recordGame(examEvent(grade));
     setBestScores(prev => {
       const best = prev.best;
       if (!best || grade.score > best.score) {
@@ -1513,7 +1677,7 @@ export default function App() {
       }
       return prev;
     });
-  }, [trackActivity, setBestScores]);
+  }, [trackActivity, setBestScores, recordGame]);
 
   const stats = useMemo(() => {
     const total = deck.length;
@@ -1536,8 +1700,58 @@ export default function App() {
 
   const dueCount = useMemo(() => deck.reduce((n, c) => n + (isDue(progress, c.id) ? 1 : 0), 0), [deck, progress]);
 
-  // Show a live streak only if studied today or yesterday (else it's broken).
-  const displayStreak = (streak.lastDate === todayStr() || streak.lastDate === yesterdayStr()) ? streak.count : 0;
+  // Show a live streak only if studied today or yesterday, or a freeze covers one missed day.
+  const displayStreak = liveStreak(streak, todayStr(), dayStr);
+
+  // Existing learners keep credit for what they studied before XP existed.
+  // Computed once (merged by max across devices, never added).
+  useEffect(() => {
+    if (game.base || Object.keys(progress).length === 0) return;
+    const base = baselineFromProgress(progress);
+    setGame(g => (g.base ? g : { ...g, base }));
+  }, [game.base, progress, setGame]);
+
+  const gameStats = useMemo(() => {
+    const t = lifetimeStats(game);
+    const levelsMap = {};
+    ALL_LEVELS.forEach(k => {
+      const ids = LEVEL_IDS[k] || [];
+      let mastered = 0;
+      for (const id of ids) if (progress[id]?.level === 3) mastered++;
+      levelsMap[k] = { mastered, total: ids.length };
+    });
+    let mastered = 0;
+    for (const s of Object.values(progress)) if (s.level === 3) mastered++;
+    return { ...t, mastered, streak: displayStreak, levels: levelsMap };
+  }, [game, progress, displayStreak]);
+  const xpInfo = useMemo(() => levelInfo(gameStats.xp), [gameStats.xp]);
+
+  const pushToast = useCallback((text) => {
+    const id = Date.now() + Math.random();
+    setToasts(t => [...t, { id, text }]);
+    setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4500);
+  }, []);
+
+  // Unlock achievements as soon as their condition is met; the unlock date is
+  // stored so it survives a progress reset.
+  useEffect(() => {
+    const ids = newlyUnlocked(ACHIEVEMENTS, gameStats, game.achievements);
+    if (!ids.length) return;
+    const now = Date.now();
+    setGame(g => {
+      const add = {};
+      ids.forEach(id => { if (!(id in g.achievements)) add[id] = now; });
+      return Object.keys(add).length ? { ...g, achievements: { ...g.achievements, ...add } } : g;
+    });
+    if (ids.length <= 2) ids.forEach(id => { const a = ACHIEVEMENTS.find(x => x.id === id); pushToast(`${a.icon} Achievement unlocked: ${a.name}`); });
+    else pushToast(`🏅 ${ids.length} achievements unlocked`);
+  }, [gameStats, game.achievements, setGame, pushToast]);
+
+  const levelSeen = useRef(null);
+  useEffect(() => {
+    if (levelSeen.current !== null && xpInfo.level > levelSeen.current) pushToast(`⬆️ Level ${xpInfo.level}!`);
+    levelSeen.current = xpInfo.level;
+  }, [xpInfo.level, pushToast]);
   const goalPct = goal > 0 ? Math.min(100, Math.round((todayCount.count / goal) * 100)) : 0;
 
   return (
@@ -1568,7 +1782,7 @@ export default function App() {
           <div>
             <div className="display" style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.02em" }}>HSK <span className="hanzi" style={{ color: theme.accent }}>汉语</span></div>
             <div style={{ fontSize: 10, color: theme.textMute, letterSpacing: "0.12em", textTransform: "uppercase", marginTop: 2 }}>
-              {stats.known.toLocaleString()} mastered · {stats.pct}% · 🔥 {displayStreak}
+              Lv {xpInfo.level} · {stats.known.toLocaleString()} mastered · {stats.pct}% · 🔥 {displayStreak}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -1593,9 +1807,18 @@ export default function App() {
         {view === "review"   && <ReviewView  deck={deck} progress={progress} onAnswer={onAnswer} reverseMode={reverseMode} theme={theme} />}
         {view === "exam"     && <ExamView    deck={deck} theme={theme} bestScores={bestScores} onFinish={handleExamFinish} />}
         {view === "library"  && <LibraryView deck={deck} progress={progress} theme={theme} />}
+        {view === "progress" && <ProgressView theme={theme} game={game} gameStats={gameStats} xpInfo={xpInfo} streak={streak} displayStreak={displayStreak} goal={goal} todayCount={todayCount} />}
         {view === "settings" && <SettingsView customWords={customWords} setCustomWords={setCustomWords} progress={progress} setProgress={setProgress} darkMode={darkMode} setDarkMode={setDarkMode} deletedCustomWords={deletedCustomWords} setDeletedCustomWords={setDeletedCustomWords} sync={sync}
-            streak={streak} setStreak={setStreak} todayCount={todayCount} goal={goal} setGoal={setGoal} bestScores={bestScores} setBestScores={setBestScores} theme={theme} />}
+            streak={streak} setStreak={setStreak} todayCount={todayCount} goal={goal} setGoal={setGoal} bestScores={bestScores} setBestScores={setBestScores} game={game} setGame={setGame} theme={theme} />}
       </main>
+
+      {toasts.length > 0 && (
+        <div role="status" aria-live="polite" style={{ position: "fixed", top: 76, left: 0, right: 0, zIndex: 40, display: "flex", flexDirection: "column", alignItems: "center", gap: 8, pointerEvents: "none" }}>
+          {toasts.map(t => (
+            <div key={t.id} className="fade-in" style={{ background: theme.text, color: theme.bg, padding: "10px 16px", borderRadius: 10, fontSize: 13, fontWeight: 500, boxShadow: "0 4px 14px rgba(0,0,0,0.2)" }}>{t.text}</div>
+          ))}
+        </div>
+      )}
 
       <nav style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: theme.surface, borderTop: `1px solid ${theme.border}`, zIndex: 30, paddingBottom: "env(safe-area-inset-bottom)" }}>
         <div style={{ maxWidth: 640, margin: "0 auto", display: "flex" }}>

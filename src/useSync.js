@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase, syncConfigured } from "./supabaseClient";
+import { mergeGame, gameSig, isEmptyGame, emptyGame } from "./gamification";
 import {
   mergeProgressMaps,
   mergeCustomWords,
@@ -25,6 +26,8 @@ import {
  *   - "Reset progress" is a timestamp; anything reviewed before it is dropped
  *     on every device, so a reset is not undone by the next pull.
  *   - A device never uploads until it has pulled at least once this session.
+ *   - The gamification log (XP, achievements) merges per field and never goes
+ *     through the settings last-write-wins; see gamification.js mergeGame.
  *
  * Everything the async code needs is read through refs, so callbacks are never
  * stale and none of them depend on React state identity.
@@ -89,7 +92,7 @@ const settingsSig = (s) => JSON.stringify([s.darkMode, s.reverseMode, s.levels, 
 
 /** Upload exactly what it is given. Pure I/O; reads no hook state. */
 async function pushRows(userId, o) {
-  const { progress, words, progressIds, wordIds, deletedWords, dropProgressIds, settings, reset } = o;
+  const { progress, words, progressIds, wordIds, deletedWords, dropProgressIds, settings, reset, game } = o;
 
   const progRows = progressIds.filter((id) => progress[id]).map((id) => progressRecordToRow(userId, id, progress[id]));
   for (const batch of chunk(progRows, PUSH_BATCH)) {
@@ -131,6 +134,12 @@ async function pushRows(userId, o) {
     );
     if (error) throw error;
   }
+
+  // Last, so the settings row is guaranteed to exist.
+  if (game) {
+    const { error } = await supabase.from("user_settings").update({ game }).eq("user_id", userId);
+    if (error) throw error;
+  }
 }
 
 export function useSync(state) {
@@ -159,6 +168,7 @@ export function useSync(state) {
   const settingsAt = useRef(readNum(SETTINGS_AT_KEY));
   const settingsDelivered = useRef(0);
   const sigRef = useRef(null);
+  const gameDelivered = useRef("");      // signature of the game log the server has
 
   const setSettingsAt = (at) => { settingsAt.current = at; writeNum(SETTINGS_AT_KEY, at); };
 
@@ -202,6 +212,7 @@ export function useSync(state) {
         deleted: cur.deletedCustomWords,
         settingsAt: settingsAt.current,
         resetAt: resetAt.current,
+        game: cur.game,
       };
 
       // Local data belongs to another account: ask before mixing the two.
@@ -214,10 +225,11 @@ export function useSync(state) {
           "Cancel: merge this device's data into this account."
         );
         if (startFresh) {
-          local = { progress: {}, words: [], deleted: [], settingsAt: 0, resetAt: 0 };
+          local = { progress: {}, words: [], deleted: [], settingsAt: 0, resetAt: 0, game: emptyGame() };
           cur.setProgress({});
           cur.setCustomWords([]);
           cur.setDeletedCustomWords([]);
+          cur.setGame(emptyGame());
         }
       }
 
@@ -231,6 +243,10 @@ export function useSync(state) {
       });
       const s = mergeSettings(settingsFrom(cur), local.settingsAt, remoteSettings);
 
+      const remoteGame = remoteSettings?.game || null;
+      const mergedGame = mergeGame(local.game, remoteGame);
+      const pushGame = !isEmptyGame(mergedGame) && gameSig(mergedGame) !== gameSig(remoteGame);
+
       // Server-side leftovers: progress of words deleted on another device.
       const remoteProgressIds = new Set(progressRows.map((r) => String(r.card_id)));
       const dropProgressIds = w.deletedIds.filter((id) => remoteProgressIds.has(String(id)));
@@ -242,6 +258,7 @@ export function useSync(state) {
         excludeIds: w.deletedIds,
       }).merged);
       cur.setCustomWords(w.merged);
+      cur.setGame((now) => mergeGame(now, mergedGame));
       if (s.adopted) {
         sigRef.current = settingsSig(s.settings);   // adopting is not a local change
         cur.setDarkMode(s.settings.darkMode);
@@ -266,6 +283,7 @@ export function useSync(state) {
         dropProgressIds,
         settings: s.push ? { values: s.settings, at: s.at, resetAt: effectiveReset } : null,
         reset: resetPending ? effectiveReset : 0,
+        game: pushGame ? mergedGame : null,
       });
 
       if (sentDeleted.length) {
@@ -278,6 +296,7 @@ export function useSync(state) {
         words: new Map(w.merged.map((x) => [String(x.id), { ...x }])),
       };
       resetDelivered.current = effectiveReset;
+      gameDelivered.current = gameSig(mergedGame);
       settingsDelivered.current = s.at;
       syncedUser.current = uid;
       writeStr(OWNER_KEY, uid);
@@ -313,9 +332,12 @@ export function useSync(state) {
     const deletedWords = cur.deletedCustomWords;
     const resetPending = resetAt.current > resetDelivered.current;
     const settingsPending = settingsAt.current > settingsDelivered.current;
+    const gameNow = cur.game;
+    const gameSigNow = gameSig(gameNow);
+    const gamePending = !isEmptyGame(gameNow) && gameSigNow !== gameDelivered.current;
 
     if (!changedProgress.length && !changedWords.length && !deletedWords.length
-        && !resetPending && !settingsPending) return;
+        && !resetPending && !settingsPending && !gamePending) return;
 
     busy.current = true;
     setStatus("syncing");
@@ -337,6 +359,7 @@ export function useSync(state) {
         dropProgressIds: [],
         settings: settingsPending ? { values: settingsFrom(cur), at, resetAt: reset } : null,
         reset: resetPending ? reset : 0,
+        game: gamePending ? gameNow : null,
       });
 
       // Record only what was actually sent; anything changed mid-request is
@@ -351,6 +374,7 @@ export function useSync(state) {
         const sent = new Set(deletedWords.map((x) => x.id));
         cur.setDeletedCustomWords((p) => p.filter((x) => !sent.has(x.id)));
       }
+      if (gamePending) gameDelivered.current = gameSigNow;
       if (resetPending || settingsPending) {
         resetDelivered.current = reset;
         settingsDelivered.current = at;
@@ -398,7 +422,7 @@ export function useSync(state) {
   /* --- push local changes in the background --- */
   useEffect(() => {
     scheduleSync();
-  }, [state.progress, state.customWords, state.deletedCustomWords, sig, userId, scheduleSync]);
+  }, [state.progress, state.customWords, state.deletedCustomWords, state.game, sig, userId, scheduleSync]);
 
   /* --- stay fresh: pull when the tab returns, retry when the network does --- */
   useEffect(() => {

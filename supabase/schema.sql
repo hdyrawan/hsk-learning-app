@@ -128,6 +128,8 @@ create trigger on_auth_user_created
 alter table public.user_settings add column if not exists progress_reset_at bigint not null default 0;
 alter table public.user_settings add column if not exists streak jsonb;
 alter table public.user_settings add column if not exists best_scores jsonb;
+-- XP / achievements log; merged field by field on the client, see gamification.js
+alter table public.user_settings add column if not exists game jsonb;
 
 -- A stale device must never move the reset marker backwards.
 create or replace function public.keep_latest_reset()
@@ -177,6 +179,7 @@ alter table public.user_settings add constraint user_settings_limits check (
   and jsonb_array_length(levels) <= 20
   and pg_column_size(coalesce(streak, '{}'::jsonb)) <= 1024
   and pg_column_size(coalesce(best_scores, '{}'::jsonb)) <= 4096
+  and pg_column_size(coalesce(game, '{}'::jsonb)) <= 524288
 ) not valid;
 
 -- At most 5,000 custom words per account.
